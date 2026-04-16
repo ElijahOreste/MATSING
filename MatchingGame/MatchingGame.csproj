@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>MatchingGame</AssemblyName>
+    <RootNamespace>MatchingGame</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- Copy monkey SVG files to output so MonkeyImageLoader can find them -->
+  <ItemGroup>
+    <Content Include="MonkeyImages\*.svg">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>MonkeyImages\%(Filename)%(Extension)</TargetPath>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Svg" Version="3.4.7" />
+  </ItemGroup>
+
+</Project>
