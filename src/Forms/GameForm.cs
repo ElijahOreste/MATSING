@@ -52,6 +52,9 @@ public class GameForm : Form
     private Panel _confettiPanel = null!;
     private readonly Random _rng = new();
 
+    // ── Form State ────────────────────────────────────────────────────────────
+    private bool _isClosing = false;
+
     // ── Event ─────────────────────────────────────────────────────────────
     /// <summary>Raised when the game ends (win or time-up). Carries final score.</summary>
     public event EventHandler<int>? GameFinished;
@@ -78,6 +81,7 @@ public class GameForm : Form
         DoubleBuffered  = true;
         FormBorderStyle = FormBorderStyle.Sizable;
         Icon            = SystemIcons.Application;
+        FormClosing     += GameForm_FormClosing;
 
         _mismatchTimer = new System.Windows.Forms.Timer { Interval = 900 };
         _mismatchTimer.Tick += MismatchTimer_Tick;
@@ -392,6 +396,12 @@ public class GameForm : Form
     }
 
     // ── Timer Events ──────────────────────────────────────────────────────
+    private void GameForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        _isClosing = true;
+        _timer.Stop();
+    }
+
     private void Timer_Tick(object? sender, TimerTickEventArgs e)
     {
         _pillTime.SetValue($"{e.Remaining}s");
@@ -406,6 +416,9 @@ public class GameForm : Form
 
     private void Timer_TimeUp(object? sender, EventArgs e)
     {
+        // Prevent timer events from executing after the form has started closing
+        if (_isClosing) return;
+
         _pillTime.SetValue("0s");
         ShowToast("⏰ Time's Up!");
         _streakLabel.Text = "Time's up! Better luck next time 🙈";
