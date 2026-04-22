@@ -1,0 +1,23 @@
+IMPORTANT — CARD IMAGES
+========================
+
+Place all 9 monkey card .jpg images into this folder:
+
+  MATSING/Assets/Cards/
+
+Required filenames (exact):
+  download__7_.jpg
+  download__2_.jpg
+  meme_macaco.jpg
+  download__4_.jpg
+  turkish_monkey__thumb_up__reaction_pic.jpg
+  Instagram_fahimvine.jpg
+  download__5_.jpg
+  download__6_.jpg
+  monyet_astronot.jpg
+
+The images are the ones you uploaded to Claude.
+The .csproj is already configured to copy them to the output directory on build.
+
+After placing the images, run:
+  dotnet run --project MATSING/MATSING.csproj
