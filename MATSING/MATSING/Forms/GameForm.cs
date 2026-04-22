@@ -233,6 +233,10 @@ public class GameForm : Form
     private void StartGame()
     {
         _mismatchTimer.Stop();
+        _confettiTimer?.Stop();
+        _confettiTimer?.Dispose();
+        _confetti.Clear();
+        _confettiPanel.SendToBack();
         _timer.Reset();
         _engine.StartNewGame(_difficulty);
         BuildCardGrid();
