@@ -70,109 +70,91 @@ public class MainMenuForm : Form
     // ── UI Construction ───────────────────────────────────────────────────
     private void BuildUI()
     {
-        // ── Header panel (custom paint for logo) ──────────────────────────
+        // ─────────────────────────────────────────────
+        // MAIN GRID (Header + Center)
+        // ─────────────────────────────────────────────
+        var mainLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Color.Transparent
+        };
+
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 220)); // Header
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));  // Center
+
+        Controls.Add(mainLayout);
+
+        // ─────────────────────────────────────────────
+        // HEADER (custom painted logo)
+        // ─────────────────────────────────────────────
         _headerPanel = new Panel
         {
-            Dock      = DockStyle.Top,
-            Height    = 220,
-            BackColor = Color.Transparent,
+            Dock = DockStyle.Fill,
+            BackColor = Color.Transparent
         };
         _headerPanel.Paint += PaintHeader;
 
-        // ── Difficulty panel ──────────────────────────────────────────────
-        _diffPanel = new Panel
+        mainLayout.Controls.Add(_headerPanel, 0, 0);
+
+        // ─────────────────────────────────────────────
+        // CENTER (buttons area)
+        // ─────────────────────────────────────────────
+        var centerLayout = new TableLayoutPanel
         {
-            Dock      = DockStyle.Top,
-            Height    = 70,
-            BackColor = Color.Transparent,
-            Padding   = new Padding(20, 10, 20, 0),
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 1,
+            BackColor = Color.Transparent
         };
 
-        _easyBtn = MakeDiffButton("🐒  Easy",   Difficulty.Easy);
-        _medBtn  = MakeDiffButton("🧠  Medium", Difficulty.Medium);
-        _hardBtn = MakeDiffButton("🔥  Hard",   Difficulty.Hard);
+        centerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        centerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var diffFlow = new FlowLayoutPanel
-        {
-            Dock            = DockStyle.Fill,
-            FlowDirection   = FlowDirection.LeftToRight,
-            WrapContents    = false,
-            BackColor       = Color.Transparent,
-            Padding         = new Padding(0),
-        };
-        diffFlow.Controls.AddRange(new Control[] { _easyBtn, _medBtn, _hardBtn });
-
-        // Centre horizontally
-        diffFlow.AutoSize         = true;
-        diffFlow.AutoSizeMode     = AutoSizeMode.GrowAndShrink;
-        var diffWrapper = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
-        diffWrapper.Controls.Add(diffFlow);
-        diffFlow.Location = new Point(
-            (diffWrapper.Width - diffFlow.PreferredSize.Width) / 2, 5);
-        diffWrapper.Resize += (_, _) =>
-            diffFlow.Location = new Point(
-                (diffWrapper.Width - diffFlow.PreferredSize.Width) / 2, 5);
-        _diffPanel.Controls.Add(diffWrapper);
-
-        // ── Best score label ──────────────────────────────────────────────
-        _bestLabel = new Label
-        {
-            Dock      = DockStyle.Top,
-            Height    = 36,
-            ForeColor = ColTeal,
-            Font      = new Font("Segoe UI", 11f, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Color.Transparent,
-        };
-        RefreshBestLabel();
-
-        // ── AOOP info panel ───────────────────────────────────────────────
-        var aoopPanel = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 100,
-            BackColor = Color.FromArgb(30, 255, 255, 255),
-            Margin    = new Padding(40),
-        };
-        aoopPanel.Paint += PaintAoopPanel;
-
-        // ── Buttons panel ─────────────────────────────────────────────────
-        _btnPanel = new Panel
-        {
-            Dock      = DockStyle.Bottom,
-            Height    = 110,
-            BackColor = Color.Transparent,
-        };
-
+        // Buttons
         _playBtn = MakePrimaryButton("▶   PLAY", ColGold, ColBg);
         _playBtn.Click += PlayBtn_Click;
 
         var quitBtn = MakePrimaryButton("✕   QUIT", ColBg2, ColWhite);
-        quitBtn.Width = 140;
         quitBtn.Click += (_, _) => Application.Exit();
-
+        
+        _playBtn.Margin = new Padding(0, 0, 0, 30); // bottom gap
+        quitBtn.Margin  = new Padding(0);
+        // Button stack
         var btnFlow = new FlowLayoutPanel
         {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize      = true,
-            BackColor     = Color.Transparent,
-            Padding       = new Padding(0),
+            FlowDirection = FlowDirection.TopDown,
+            AutoSize = true,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Padding = new Padding(0)
         };
-        btnFlow.Controls.AddRange(new Control[] { _playBtn, quitBtn });
-        _btnPanel.Controls.Add(btnFlow);
-        _btnPanel.Resize += (_, _) =>
-            btnFlow.Location = new Point(
-                (_btnPanel.Width  - btnFlow.PreferredSize.Width)  / 2,
-                (_btnPanel.Height - btnFlow.PreferredSize.Height) / 2);
 
-        // ── Add to form (bottom-up because Dock.Top stacks top-down) ──────
-        Controls.Add(_btnPanel);
-        Controls.Add(aoopPanel);
+        btnFlow.Controls.Add(_playBtn);
+        btnFlow.Controls.Add(quitBtn);
+
+        // 🔑 Center it inside the grid cell
+        btnFlow.Anchor = AnchorStyles.None;
+
+        centerLayout.Controls.Add(btnFlow, 0, 0);
+        mainLayout.Controls.Add(centerLayout, 0, 1);
+
+        // ─────────────────────────────────────────────
+        // BEST SCORE LABEL (footer)
+        // ─────────────────────────────────────────────
+        _bestLabel = new Label
+        {
+            Dock = DockStyle.Bottom,
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.Transparent,
+            ForeColor = ColTeal,
+            Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+            Padding = new Padding(0, 15, 0, 15),
+            Height = 50
+        };
         Controls.Add(_bestLabel);
-        Controls.Add(_diffPanel);
-        Controls.Add(_headerPanel);
-
-        HighlightDiffButton(_selectedDifficulty);
+        RefreshBestLabel();
     }
 
     // ── Logo Animation ────────────────────────────────────────────────────
@@ -225,33 +207,6 @@ public class MainMenuForm : Form
             ly + sz.Height + 4);
     }
 
-    // ── Custom Paint: AOOP Info panel ─────────────────────────────────────
-    private void PaintAoopPanel(object? sender, PaintEventArgs e)
-    {
-        if (sender is not Panel p) return;
-        var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-        using var bgBrush = new SolidBrush(Color.FromArgb(40, 59, 24, 120));
-        g.FillRectangle(bgBrush, p.ClientRectangle);
-
-        using var titleFont  = new Font("Segoe UI Black", 9f, FontStyle.Bold, GraphicsUnit.Point);
-        using var titleBrush = new SolidBrush(ColGold);
-        g.DrawString("AOOP PRINCIPLES DEMONSTRATED:", titleFont, titleBrush, 20, 10);
-
-        string[] principles = {
-            "① ABSTRACTION  →  CardBase (abstract), IFlippable, IScoreable",
-            "② ENCAPSULATION  →  GameEngine (private state), ScoreTracker",
-            "③ INHERITANCE  →  MonkeyCard : CardBase  |  CardControl : Panel",
-            "④ POLYMORPHISM  →  PlayFlipAnimation() dispatched at runtime per type",
-        };
-
-        using var itemFont  = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
-        using var itemBrush = new SolidBrush(Color.FromArgb(220, 255, 255, 255));
-        for (int i = 0; i < principles.Length; i++)
-            g.DrawString(principles[i], itemFont, itemBrush, 20, 28 + i * 16);
-    }
-
     // ── Button Factories ──────────────────────────────────────────────────
     private Button MakeDiffButton(string text, Difficulty diff)
     {
@@ -271,7 +226,7 @@ public class MainMenuForm : Form
         btn.Click += (_, _) =>
         {
             _selectedDifficulty = diff;
-            HighlightDiffButton(diff);
+            //HighlightDiffButton(diff);
             RefreshBestLabel();
         };
         return btn;
@@ -294,20 +249,6 @@ public class MainMenuForm : Form
         btn.MouseEnter += (_, _) => btn.BackColor = ControlPaint.Light(bg, 0.2f);
         btn.MouseLeave += (_, _) => btn.BackColor = bg;
         return btn;
-    }
-
-    private void HighlightDiffButton(Difficulty diff)
-    {
-        foreach (var (btn, d) in new[] {
-            (_easyBtn, Difficulty.Easy),
-            (_medBtn,  Difficulty.Medium),
-            (_hardBtn, Difficulty.Hard) })
-        {
-            bool active = d == diff;
-            btn.BackColor = active ? ColRed    : ColBg2;
-            btn.ForeColor = active ? ColWhite  : Color.Silver;
-            btn.FlatAppearance.BorderColor = active ? ColRed : Color.FromArgb(59, 24, 120);
-        }
     }
 
     private void RefreshBestLabel()
