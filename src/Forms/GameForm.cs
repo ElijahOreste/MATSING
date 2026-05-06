@@ -325,7 +325,7 @@ public class GameForm : Form
 
         if (_modifiers.HasFlag(GameModifier.ShrinkingCards))
         {
-            _shrinkTimer = new System.Windows.Forms.Timer { Interval = 50 };
+            _shrinkTimer = new System.Windows.Forms.Timer { Interval = 250 };
             _shrinkTimer.Tick += (_, _) =>
             {
                 if (_isClosing) return;
