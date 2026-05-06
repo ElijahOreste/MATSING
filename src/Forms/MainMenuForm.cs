@@ -3,8 +3,8 @@ using MATSING.Models;
 namespace MATSING.Forms;
 
 /// <summary>
-/// The main menu / splash screen for MATSING.
-/// Players select difficulty and click PLAY to launch <see cref="GameForm"/>.
+/// The main landing page / menu for MATSING.
+/// Players can start the game, view stats, or exit.
 /// Uses full GDI+ custom painting for the deep-purple aesthetic.
 /// </summary>
 public class MainMenuForm : Form
@@ -18,7 +18,6 @@ public class MainMenuForm : Form
     private static readonly Color ColWhite   = Color.White;
 
     // ── State ─────────────────────────────────────────────────────────────
-    private Difficulty _selectedDifficulty = Difficulty.Easy;
     private readonly Dictionary<Difficulty, int> _bestScores = new()
     {
         [Difficulty.Easy]   = 0,
@@ -28,11 +27,8 @@ public class MainMenuForm : Form
 
     // ── Controls ──────────────────────────────────────────────────────────
     private Panel   _headerPanel  = null!;
-    private Panel   _diffPanel    = null!;
     private Panel   _btnPanel     = null!;
-    private Button  _playBtn      = null!;
-    private Button  _easyBtn      = null!, _medBtn = null!, _hardBtn = null!;
-    private Label   _bestLabel    = null!;
+    private Button  _startBtn     = null!;
 
     // Logo animation
     private System.Windows.Forms.Timer _logoTimer = null!;
@@ -45,12 +41,6 @@ public class MainMenuForm : Form
         InitialiseForm();
         BuildUI();
         StartLogoAnimation();
-    }
-
-    public void UpdateBestScore(Difficulty diff, int score)
-    {
-        if (score > _bestScores[diff]) _bestScores[diff] = score;
-        RefreshBestLabel();
     }
 
     // ── Form Setup ────────────────────────────────────────────────────────
@@ -79,100 +69,41 @@ public class MainMenuForm : Form
         };
         _headerPanel.Paint += PaintHeader;
 
-        // ── Difficulty panel ──────────────────────────────────────────────
-        _diffPanel = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 70,
-            BackColor = Color.Transparent,
-            Padding   = new Padding(20, 10, 20, 0),
-        };
-
-        _easyBtn = MakeDiffButton("🐒  Easy",   Difficulty.Easy);
-        _medBtn  = MakeDiffButton("🧠  Medium", Difficulty.Medium);
-        _hardBtn = MakeDiffButton("🔥  Hard",   Difficulty.Hard);
-
-        var diffFlow = new FlowLayoutPanel
-        {
-            Dock            = DockStyle.Fill,
-            FlowDirection   = FlowDirection.LeftToRight,
-            WrapContents    = false,
-            BackColor       = Color.Transparent,
-            Padding         = new Padding(0),
-        };
-        diffFlow.Controls.AddRange(new Control[] { _easyBtn, _medBtn, _hardBtn });
-
-        // Centre horizontally
-        diffFlow.AutoSize         = true;
-        diffFlow.AutoSizeMode     = AutoSizeMode.GrowAndShrink;
-        var diffWrapper = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
-        diffWrapper.Controls.Add(diffFlow);
-        diffFlow.Location = new Point(
-            (diffWrapper.Width - diffFlow.PreferredSize.Width) / 2, 5);
-        diffWrapper.Resize += (_, _) =>
-            diffFlow.Location = new Point(
-                (diffWrapper.Width - diffFlow.PreferredSize.Width) / 2, 5);
-        _diffPanel.Controls.Add(diffWrapper);
-
-        // ── Best score label ──────────────────────────────────────────────
-        _bestLabel = new Label
-        {
-            Dock      = DockStyle.Top,
-            Height    = 36,
-            ForeColor = ColTeal,
-            Font      = new Font("Segoe UI", 11f, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Color.Transparent,
-        };
-        RefreshBestLabel();
-
-        // ── AOOP info panel ───────────────────────────────────────────────
-        var aoopPanel = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 100,
-            BackColor = Color.FromArgb(30, 255, 255, 255),
-            Margin    = new Padding(40),
-        };
-        aoopPanel.Paint += PaintAoopPanel;
-
-        // ── Buttons panel ─────────────────────────────────────────────────
+        // ── Buttons panel (vertical layout) ────────────────────────────────
         _btnPanel = new Panel
         {
-            Dock      = DockStyle.Bottom,
-            Height    = 110,
+            Dock      = DockStyle.Fill,
             BackColor = Color.Transparent,
+            Padding   = new Padding(0, 50, 0, 50),
         };
 
-        _playBtn = MakePrimaryButton("▶   PLAY", ColGold, ColBg);
-        _playBtn.Click += PlayBtn_Click;
+        _startBtn = MakePrimaryButton("▶   START GAME", ColGold, ColBg);
+        _startBtn.Click += StartBtn_Click;
+
+        var statsBtn = MakePrimaryButton("📊   STATS", ColTeal, ColBg);
+        statsBtn.Click += (_, _) => ShowStats();
 
         var quitBtn = MakePrimaryButton("✕   QUIT", ColBg2, ColWhite);
-        quitBtn.Width = 140;
         quitBtn.Click += (_, _) => Application.Exit();
 
         var btnFlow = new FlowLayoutPanel
         {
-            FlowDirection = FlowDirection.LeftToRight,
+            FlowDirection = FlowDirection.TopDown,
             AutoSize      = true,
+            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
             BackColor     = Color.Transparent,
             Padding       = new Padding(0),
         };
-        btnFlow.Controls.AddRange(new Control[] { _playBtn, quitBtn });
+        btnFlow.Controls.AddRange(new Control[] { _startBtn, statsBtn, quitBtn });
         _btnPanel.Controls.Add(btnFlow);
         _btnPanel.Resize += (_, _) =>
             btnFlow.Location = new Point(
                 (_btnPanel.Width  - btnFlow.PreferredSize.Width)  / 2,
                 (_btnPanel.Height - btnFlow.PreferredSize.Height) / 2);
 
-        // ── Add to form (bottom-up because Dock.Top stacks top-down) ──────
+        // ── Add to form ───────────────────────────────────────────────────
         Controls.Add(_btnPanel);
-        Controls.Add(aoopPanel);
-        Controls.Add(_bestLabel);
-        Controls.Add(_diffPanel);
         Controls.Add(_headerPanel);
-
-        HighlightDiffButton(_selectedDifficulty);
     }
 
     // ── Logo Animation ────────────────────────────────────────────────────
@@ -225,8 +156,8 @@ public class MainMenuForm : Form
             ly + sz.Height + 4);
     }
 
-    // ── Custom Paint: AOOP Info panel ─────────────────────────────────────
-    private void PaintAoopPanel(object? sender, PaintEventArgs e)
+    // ── Custom Paint: Info panel ──────────────────────────────────────────
+    private void PaintInfoPanel(object? sender, PaintEventArgs e)
     {
         if (sender is not Panel p) return;
         var g = e.Graphics;
@@ -235,48 +166,23 @@ public class MainMenuForm : Form
         using var bgBrush = new SolidBrush(Color.FromArgb(40, 59, 24, 120));
         g.FillRectangle(bgBrush, p.ClientRectangle);
 
-        using var titleFont  = new Font("Segoe UI Black", 9f, FontStyle.Bold, GraphicsUnit.Point);
+        using var titleFont  = new Font("Segoe UI Black", 10f, FontStyle.Bold, GraphicsUnit.Point);
         using var titleBrush = new SolidBrush(ColGold);
-        g.DrawString("AOOP PRINCIPLES DEMONSTRATED:", titleFont, titleBrush, 20, 10);
+        g.DrawString("ABOUT MATSING:", titleFont, titleBrush, 20, 10);
 
         string[] principles = {
             "① ABSTRACTION  →  CardBase (abstract), IFlippable, IScoreable",
             "② ENCAPSULATION  →  GameEngine (private state), ScoreTracker",
             "③ INHERITANCE  →  MonkeyCard : CardBase  |  CardControl : Panel",
-            "④ POLYMORPHISM  →  PlayFlipAnimation() dispatched at runtime per type",
         };
 
         using var itemFont  = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
         using var itemBrush = new SolidBrush(Color.FromArgb(220, 255, 255, 255));
         for (int i = 0; i < principles.Length; i++)
-            g.DrawString(principles[i], itemFont, itemBrush, 20, 28 + i * 16);
+            g.DrawString(principles[i], itemFont, itemBrush, 20, 28 + i * 18);
     }
 
     // ── Button Factories ──────────────────────────────────────────────────
-    private Button MakeDiffButton(string text, Difficulty diff)
-    {
-        var btn = new Button
-        {
-            Text      = text,
-            Size      = new Size(150, 44),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = ColBg2,
-            ForeColor = Color.Silver,
-            Font      = new Font("Segoe UI", 10f, FontStyle.Bold),
-            Cursor    = Cursors.Hand,
-            Margin    = new Padding(6, 0, 6, 0),
-        };
-        btn.FlatAppearance.BorderColor = Color.FromArgb(59, 24, 120);
-        btn.FlatAppearance.BorderSize  = 2;
-        btn.Click += (_, _) =>
-        {
-            _selectedDifficulty = diff;
-            HighlightDiffButton(diff);
-            RefreshBestLabel();
-        };
-        return btn;
-    }
-
     private Button MakePrimaryButton(string text, Color bg, Color fg)
     {
         var btn = new Button
@@ -288,7 +194,7 @@ public class MainMenuForm : Form
             ForeColor = fg,
             Font      = new Font("Segoe UI Black", 14f, FontStyle.Bold),
             Cursor    = Cursors.Hand,
-            Margin    = new Padding(8, 0, 8, 0),
+            Margin    = new Padding(0, 12, 0, 12),
         };
         btn.FlatAppearance.BorderSize = 0;
         btn.MouseEnter += (_, _) => btn.BackColor = ControlPaint.Light(bg, 0.2f);
@@ -296,34 +202,41 @@ public class MainMenuForm : Form
         return btn;
     }
 
-    private void HighlightDiffButton(Difficulty diff)
+    // ── Start Button ──────────────────────────────────────────────────────
+    private void StartBtn_Click(object? sender, EventArgs e)
     {
-        foreach (var (btn, d) in new[] {
-            (_easyBtn, Difficulty.Easy),
-            (_medBtn,  Difficulty.Medium),
-            (_hardBtn, Difficulty.Hard) })
+        // Create difficulty selection form
+        var diffForm = new DifficultySelectionForm(_bestScores);
+        diffForm.FormClosed += (_, _) =>
         {
-            bool active = d == diff;
-            btn.BackColor = active ? ColRed    : ColBg2;
-            btn.ForeColor = active ? ColWhite  : Color.Silver;
-            btn.FlatAppearance.BorderColor = active ? ColRed : Color.FromArgb(59, 24, 120);
-        }
+            // When difficulty form closes, check if game was completed
+            if (diffForm.GameWasStarted)
+            {
+                UpdateBestScore(diffForm.SelectedDifficulty, diffForm.FinalScore);
+            }
+            diffForm.Dispose();
+            // Reshow this form
+            this.Show();
+            this.BringToFront();
+            this.Focus();
+        };
+        
+        // Hide this form and show difficulty form
+        this.Hide();
+        diffForm.Show();
     }
 
-    private void RefreshBestLabel()
+    private void UpdateBestScore(Difficulty diff, int score)
     {
-        int best = _bestScores[_selectedDifficulty];
-        _bestLabel.Text = best > 0
-            ? $"🏆  Best Score ({_selectedDifficulty}): {best} pts"
-            : $"No record yet for {_selectedDifficulty} — be the first! 🐒";
+        if (score > _bestScores[diff]) _bestScores[diff] = score;
+        _headerPanel.Invalidate();
     }
 
-    // ── Play Button ───────────────────────────────────────────────────────
-    private void PlayBtn_Click(object? sender, EventArgs e)
+    private void ShowStats()
     {
-        var gameForm = new GameForm(_selectedDifficulty);
-        gameForm.GameFinished += (_, score) => UpdateBestScore(_selectedDifficulty, score);
-        gameForm.ShowDialog(this);
+        var statsForm = new StatsForm(_bestScores);
+        statsForm.ShowDialog(this);
+        statsForm.Dispose();
     }
 
     // ── Dispose ───────────────────────────────────────────────────────────
