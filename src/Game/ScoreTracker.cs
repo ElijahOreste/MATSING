@@ -5,7 +5,6 @@ namespace MATSING.Game;
 //  ScoreTracker hides the scoring formula, streak counter, and
 //  multipliers completely. External code can only READ Score
 //  (public getter) and CALL the narrow public methods.
-//  The _streak, _baseScore, and all constants are PRIVATE.
 // ═══════════════════════════════════════════════════════════════
 
 /// <summary>
@@ -16,24 +15,30 @@ namespace MATSING.Game;
 /// </summary>
 public class ScoreTracker
 {
-    // ── Private State — fully hidden from outside ─────────────────────────
-    private int _baseScore;
-    private int _streak;
+    // ── Private State ─────────────────────────────────────────────────────
+    private int  _baseScore;
+    private int  _streak;
+    private bool _comboMode;
 
-    private const int BASE_MATCH_POINTS   = 100;
-    private const int STREAK_MULTIPLIER   = 25;
-    private const int TIME_BONUS_FAST     = 50;   // < 30 s elapsed
-    private const int TIME_BONUS_SLOW     = 10;
+    private const int STREAK_MULTIPLIER = 25;
+    private const int TIME_BONUS_FAST   = 50;   // < 30 s elapsed
+    private const int TIME_BONUS_SLOW   = 10;
+
+    // Max combo multiplier caps at ×4
+    private const int MAX_COMBO = 4;
 
     // ── Public API — read-only score ──────────────────────────────────────
-    /// <summary>
-    /// Current player score. Can only be read from outside this class;
-    /// modification is private to preserve encapsulation.
-    /// </summary>
+    /// <summary>Current player score. Read-only outside this class.</summary>
     public int Score { get; private set; }
 
     /// <summary>Current consecutive-match streak count.</summary>
     public int Streak => _streak;
+
+    /// <summary>
+    /// Current combo multiplier (1–4). Only meaningful when ComboMultiplier
+    /// modifier is active; otherwise always 1.
+    /// </summary>
+    public int ComboMultiplier => _comboMode ? Math.Min(_streak, MAX_COMBO) : 1;
 
     // ── Public Methods ────────────────────────────────────────────────────
 
@@ -41,30 +46,37 @@ public class ScoreTracker
     /// Registers a successful match and updates <see cref="Score"/>
     /// using the hidden internal formula.
     /// </summary>
-    /// <param name="elapsedSeconds">Game time elapsed — faster = bigger bonus.</param>
-    /// <param name="cardPoints">Base point value from the matched card type.</param>
     public void RegisterMatch(int elapsedSeconds, int cardPoints)
     {
         _streak++;
         int bonus     = elapsedSeconds < 30 ? TIME_BONUS_FAST : TIME_BONUS_SLOW;
         int streakPts = (_streak - 1) * STREAK_MULTIPLIER;
         _baseScore   += cardPoints;
-        Score        += cardPoints + bonus + streakPts;
+
+        if (_comboMode)
+        {
+            // ComboMultiplier: multiply the entire reward by the capped streak
+            int multiplier = Math.Min(_streak, MAX_COMBO);
+            Score += (cardPoints + bonus + streakPts) * multiplier;
+        }
+        else
+        {
+            Score += cardPoints + bonus + streakPts;
+        }
     }
 
-    /// <summary>
-    /// Registers a mismatch and resets the streak counter privately.
-    /// </summary>
+    /// <summary>Registers a mismatch and resets the streak counter.</summary>
     public void RegisterMismatch()
     {
-        _streak = 0;   // private state mutated internally
+        _streak = 0;
     }
 
     /// <summary>Resets all score state for a new game.</summary>
-    public void Reset()
+    public void Reset(bool comboMode = false)
     {
         Score      = 0;
         _streak    = 0;
         _baseScore = 0;
+        _comboMode = comboMode;
     }
 }

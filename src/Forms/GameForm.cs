@@ -20,49 +20,61 @@ public class GameForm : Form
     private static readonly Color ColRed   = Color.FromArgb(255, 107, 107);
 
     // ── Engine & Timer ────────────────────────────────────────────────────
-    private readonly GameEngine _engine = new();
-    private readonly GameTimer  _timer  = new();
+    private readonly GameEngine _engine     = new();
+    private readonly GameTimer  _timer      = new();
     private readonly Difficulty _difficulty;
+    private readonly GameModifier _modifiers;
 
     // ═══════════════════════════════════════════════════════════════
     //  POLYMORPHISM IN ACTION
     //  This list holds CardControl references — at runtime some are
     //  MonkeyCardControl, some SpecialCardControl.
-    //  Calling PlayFlipAnimation() / PlayMatchAnimation() on any
-    //  element dispatches to the correct subclass override.
     // ═══════════════════════════════════════════════════════════════
     private readonly List<CardControl> _cardControls = new();
 
     // ── UI Controls ───────────────────────────────────────────────────────
-    private Panel              _topBar       = null!;
-    private Panel              _timerBarWrap = null!;
-    private Panel              _timerBarFill = null!;
-    private Panel              _boardPanel   = null!;
-    private Panel              _bottomBar    = null!;
+    private Panel              _topBar        = null!;
+    private Panel              _timerBarWrap  = null!;
+    private Panel              _timerBarFill  = null!;
+    private Panel              _boardPanel    = null!;
+    private Panel              _bottomBar     = null!;
     private Controls.ScorePillControl _pillMatches = null!, _pillMoves = null!,
                                        _pillScore  = null!, _pillTime  = null!;
-    private Label              _streakLabel  = null!;
-    private Label              _toastLabel   = null!;
-    private System.Windows.Forms.Timer _toastTimer  = null!;
+    private Label              _streakLabel   = null!;
+    private Label              _toastLabel    = null!;
+    private System.Windows.Forms.Timer _toastTimer    = null!;
     private System.Windows.Forms.Timer _mismatchTimer = null!;
+
+    // ── Modifier Timers ───────────────────────────────────────────────────
+    private System.Windows.Forms.Timer? _driftTimer;
+    private System.Windows.Forms.Timer? _shrinkTimer;
+    private float _shrinkScale = 1.0f;
+    private const float SHRINK_MIN   = 0.45f;
+    private const float SHRINK_STEP  = 0.004f;
 
     // ── Confetti ──────────────────────────────────────────────────────────
     private List<ConfettiParticle> _confetti = new();
-    private System.Windows.Forms.Timer _confettiTimer = null!;
+    private System.Windows.Forms.Timer? _confettiTimer;
     private Panel _confettiPanel = null!;
     private readonly Random _rng = new();
 
-    // ── Form State ────────────────────────────────────────────────────────────
+    // ── Combo label ───────────────────────────────────────────────────────
+    private Label? _comboLabel;
+
+    // ── Form State ────────────────────────────────────────────────────────
     private bool _isClosing = false;
+    // Cached grid metrics used by the resize handler (no lambda capture accumulation)
+    private int _gridW, _gridH, _cardBaseW, _cardBaseH, _gapX, _gapY, _cols;
 
     // ── Event ─────────────────────────────────────────────────────────────
     /// <summary>Raised when the game ends (win or time-up). Carries final score.</summary>
     public event EventHandler<int>? GameFinished;
 
     // ── Constructor ───────────────────────────────────────────────────────
-    public GameForm(Difficulty difficulty)
+    public GameForm(Difficulty difficulty, GameModifier modifiers = GameModifier.None)
     {
         _difficulty = difficulty;
+        _modifiers  = modifiers;
         InitialiseForm();
         BuildUI();
         WireEngineEvents();
@@ -110,7 +122,7 @@ public class GameForm : Form
         _pillMatches = new Controls.ScorePillControl("Matches", "0");
         _pillMoves   = new Controls.ScorePillControl("Moves",   "0");
         _pillScore   = new Controls.ScorePillControl("Score",   "0");
-        _pillTime    = new Controls.ScorePillControl("Time",    "—");
+        _pillTime    = new Controls.ScorePillControl("Time",    _modifiers.HasFlag(GameModifier.ZenMode) ? "∞" : "—");
 
         var pillFlow = new FlowLayoutPanel
         {
@@ -121,6 +133,20 @@ public class GameForm : Form
         };
         pillFlow.Controls.AddRange(new Control[]
             { _pillMatches, _pillMoves, _pillScore, _pillTime });
+
+        // ComboMultiplier pill-style label
+        if (_modifiers.HasFlag(GameModifier.ComboMultiplier))
+        {
+            _comboLabel = new Label
+            {
+                Text      = "×1",
+                Font      = new Font("Segoe UI Black", 22f, FontStyle.Bold),
+                ForeColor = ColGold,
+                BackColor = Color.Transparent,
+                AutoSize  = true,
+            };
+            pillFlow.Controls.Add(_comboLabel);
+        }
 
         // Right-side buttons
         var newBtn  = MakeTopButton("↺ New",  (_, _) => StartGame());
@@ -175,7 +201,7 @@ public class GameForm : Form
             Font      = new Font("Segoe UI Black", 11f, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
-            Text      = "Find the matching monkey pairs! 🐒",
+            Text      = BuildStatusText(),
         };
         _bottomBar.Controls.Add(_streakLabel);
 
@@ -186,6 +212,8 @@ public class GameForm : Form
             BackColor = Color.Transparent,
             AutoScroll= true,
         };
+        // FIX: use a named handler to avoid accumulation on restarts
+        _boardPanel.Resize += BoardPanel_Resize;
 
         // ── Toast label (floating feedback) ──────────────────────────────
         _toastLabel = new Label
@@ -222,9 +250,11 @@ public class GameForm : Form
     // ── Engine Events ─────────────────────────────────────────────────────
     private void WireEngineEvents()
     {
-        _engine.MatchFound    += Engine_MatchFound;
-        _engine.MismatchFound += Engine_MismatchFound;
-        _engine.GameWon       += Engine_GameWon;
+        _engine.MatchFound       += Engine_MatchFound;
+        _engine.MismatchFound    += Engine_MismatchFound;
+        _engine.GameWon          += Engine_GameWon;
+        _engine.GameOverHardcore += Engine_GameOverHardcore;
+        _engine.CardsDrifted     += Engine_CardsDrifted;
     }
 
     private void WireTimerEvents()
@@ -237,17 +267,88 @@ public class GameForm : Form
     private void StartGame()
     {
         _mismatchTimer.Stop();
+        StopModifierTimers();
+
         _confettiTimer?.Stop();
         _confettiTimer?.Dispose();
+        _confettiTimer = null;
         _confetti.Clear();
         _confettiPanel.SendToBack();
+
         _timer.Reset();
-        _engine.StartNewGame(_difficulty);
+        _shrinkScale = 1.0f;
+
+        _engine.StartNewGame(_difficulty, _modifiers);
         BuildCardGrid();
         UpdatePills();
-        _streakLabel.Text = "Find the matching monkey pairs! 🐒";
+        _streakLabel.Text = BuildStatusText();
         _timerBarFill.BackColor = ColTeal;
-        _timer.Start(_engine.Config.TimeLimitS);
+
+        if (_modifiers.HasFlag(GameModifier.ZenMode))
+        {
+            // Zen: no countdown — hide the bar entirely
+            _timerBarWrap.Visible = false;
+            _pillTime.SetValue("∞");
+        }
+        else
+        {
+            _timerBarWrap.Visible = true;
+            _timer.Start(_engine.Config.TimeLimitS);
+        }
+
+        StartModifierTimers();
+    }
+
+    // ── Modifier Timer Management ─────────────────────────────────────────
+    private void StartModifierTimers()
+    {
+        if (_modifiers.HasFlag(GameModifier.CardDrift))
+        {
+            _driftTimer = new System.Windows.Forms.Timer { Interval = 20_000 };
+            _driftTimer.Tick += (_, _) =>
+            {
+                if (!_isClosing) _engine.TriggerCardDrift();
+            };
+            _driftTimer.Start();
+        }
+
+        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))
+        {
+            _shrinkTimer = new System.Windows.Forms.Timer { Interval = 50 };
+            _shrinkTimer.Tick += (_, _) =>
+            {
+                if (_isClosing) return;
+                _shrinkScale = Math.Max(SHRINK_MIN, _shrinkScale - SHRINK_STEP);
+                ApplyShrink();
+            };
+            _shrinkTimer.Start();
+        }
+    }
+
+    private void StopModifierTimers()
+    {
+        _driftTimer?.Stop();
+        _driftTimer?.Dispose();
+        _driftTimer = null;
+
+        _shrinkTimer?.Stop();
+        _shrinkTimer?.Dispose();
+        _shrinkTimer = null;
+    }
+
+    private void ApplyShrink()
+    {
+        int baseW = _cardBaseW;
+        int baseH = _cardBaseH;
+        if (baseW == 0 || baseH == 0) return;
+
+        int newW = Math.Max(40, (int)(baseW * _shrinkScale));
+        int newH = Math.Max(50, (int)(baseH * _shrinkScale));
+
+        foreach (var ctrl in _cardControls)
+            ctrl.Size = new Size(newW, newH);
+
+        RepositionCards();
     }
 
     // ── Build Card Grid ───────────────────────────────────────────────────
@@ -262,23 +363,21 @@ public class GameForm : Form
         var cfg  = _engine.Config;
         var deck = _engine.GetDeck();
 
-        int cols    = cfg.Columns;
-        int cardW   = cfg.CardWidth;
-        int cardH   = cfg.CardHeight;
-        int gapX    = 14, gapY = 14;
-        int rows    = (int)Math.Ceiling((double)deck.Count / cols);
-        int gridW   = cols * cardW + (cols - 1) * gapX;
-        int gridH   = rows * cardH + (rows - 1) * gapY;
+        _cols      = cfg.Columns;
+        _cardBaseW = cfg.CardWidth;
+        _cardBaseH = cfg.CardHeight;
+        _gapX      = 14;
+        _gapY      = 14;
+        int rows   = (int)Math.Ceiling((double)deck.Count / _cols);
+        _gridW     = _cols * _cardBaseW + (_cols - 1) * _gapX;
+        _gridH     = rows  * _cardBaseH + (rows  - 1) * _gapY;
 
         for (int i = 0; i < deck.Count; i++)
         {
             var card = deck[i];
 
             // ═══════════════════════════════════════════════════════════════
-            //  POLYMORPHISM IN ACTION
-            //  Factory: creates the correct CardControl subtype per card model.
-            //  After this point the list holds CardControl references — the
-            //  concrete type is invisible to the rest of GameForm.
+            //  POLYMORPHISM IN ACTION — factory creates the correct subtype
             // ═══════════════════════════════════════════════════════════════
             CardControl ctrl = card switch
             {
@@ -287,33 +386,63 @@ public class GameForm : Form
                 _             => new CardControl(card),
             };
 
-            ctrl.Size   = new Size(cardW, cardH);
-            int col = i % cols, row = i / cols;
-
-            // Centre the grid within the board panel
-            _boardPanel.Resize += (_, _) => RepositionCards(gridW, gridH, cardW, cardH, gapX, gapY, cols);
-
-            ctrl.Left = col * (cardW + gapX);
-            ctrl.Top  = row * (cardH + gapY);
+            ctrl.Size        = new Size(_cardBaseW, _cardBaseH);
             ctrl.CardClicked += Card_Clicked;
 
             _cardControls.Add(ctrl);
             _boardPanel.Controls.Add(ctrl);
         }
 
-        RepositionCards(gridW, gridH, cardW, cardH, gapX, gapY, cols);
+        // Show FlipLimit overlay if active
+        if (_modifiers.HasFlag(GameModifier.FlipLimit))
+            AttachFlipLimitOverlays();
+
+        RepositionCards();
         _toastLabel.BringToFront();
     }
 
-    private void RepositionCards(int gridW, int gridH, int cardW, int cardH, int gapX, int gapY, int cols)
+    // Attach a small flip-count badge to each card when FlipLimit is active
+    private void AttachFlipLimitOverlays()
     {
-        int offX = Math.Max(10, (_boardPanel.Width  - gridW) / 2);
-        int offY = Math.Max(10, (_boardPanel.Height - gridH) / 2);
+        foreach (var ctrl in _cardControls)
+        {
+            ctrl.Paint += (_, e) =>
+            {
+                int rem = _engine.FlipsRemaining(ctrl.CardData);
+                if (rem < 0 || ctrl.CardData.IsMatched) return;
+
+                string txt = rem.ToString();
+                using var f = new Font("Segoe UI Black", Math.Max(7f, ctrl.Width / 10f), FontStyle.Bold, GraphicsUnit.Point);
+                using var bg = new SolidBrush(rem == 0 ? Color.FromArgb(200, ColRed) : Color.FromArgb(160, ColBg2));
+                using var fg = new SolidBrush(Color.White);
+                var sz = e.Graphics.MeasureString(txt, f);
+                var r = new RectangleF(ctrl.Width - sz.Width - 6, 4, sz.Width + 4, sz.Height + 2);
+                e.Graphics.FillRectangle(bg, r);
+                e.Graphics.DrawString(txt, f, fg, r.X + 2, r.Y + 1);
+            };
+        }
+    }
+
+    // FIX: named method — called once per Resize, no lambda accumulation
+    private void BoardPanel_Resize(object? sender, EventArgs e) => RepositionCards();
+
+    private void RepositionCards()
+    {
+        if (_cardControls.Count == 0) return;
+        int cardW = _cardControls[0].Width;
+        int cardH = _cardControls[0].Height;
+        int gridW = _cols * cardW + (_cols - 1) * _gapX;
+        int gridH = (int)Math.Ceiling((double)_cardControls.Count / _cols) * cardH
+                  + ((int)Math.Ceiling((double)_cardControls.Count / _cols) - 1) * _gapY;
+
+        int offX  = Math.Max(10, (_boardPanel.Width  - gridW) / 2);
+        int offY  = Math.Max(10, (_boardPanel.Height - gridH) / 2);
+
         for (int i = 0; i < _cardControls.Count; i++)
         {
-            int col = i % cols, row = i / cols;
-            _cardControls[i].Left = offX + col * (cardW + gapX);
-            _cardControls[i].Top  = offY + row * (cardH + gapY);
+            int col = i % _cols, row = i / _cols;
+            _cardControls[i].Left = offX + col * (cardW + _gapX);
+            _cardControls[i].Top  = offY + row * (cardH + _gapY);
         }
 
         // Centre toast
@@ -329,11 +458,9 @@ public class GameForm : Form
         bool accepted = _engine.OnCardSelected(card, _timer.Elapsed);
         if (!accepted) return;
 
-        // ─────────────────────────────────────────────────────────────────
-        //  POLYMORPHISM: ctrl might be MonkeyCardControl OR SpecialCardControl.
-        //  We call the same method — CLR dispatches to the right override.
-        // ─────────────────────────────────────────────────────────────────
+        // POLYMORPHISM: ctrl is MonkeyCardControl OR SpecialCardControl
         ctrl.PlayFlipAnimation();
+        ctrl.Invalidate(); // refresh FlipLimit overlay
     }
 
     // ── Match Found ───────────────────────────────────────────────────────
@@ -341,24 +468,29 @@ public class GameForm : Form
     {
         var a = FindControl(e.First);
         var b = FindControl(e.Second);
+        var c = e.Third != null ? FindControl(e.Third) : null;
 
-        // Polymorphic match animation
         a?.PlayMatchAnimation();
         b?.PlayMatchAnimation();
+        c?.PlayMatchAnimation();
 
         int streak = _engine.Streak;
         if (streak >= 2)
         {
-            ShowToast($"🔥 {streak}x Combo!");
+            string comboText = _modifiers.HasFlag(GameModifier.ComboMultiplier)
+                ? $"🔥 {streak}x Combo! ×{_engine.Score}" // show multiplier feedback
+                : $"🔥 {streak}x Combo!";
+            ShowToast(comboText);
             _streakLabel.Text = $"🔥 {streak}x Combo Streak!";
         }
         else
         {
             ShowToast("🎯 Match!");
-            _streakLabel.Text = $"Matched: {_engine.MatchCount} / {_engine.Config.PairCount}";
+            _streakLabel.Text = $"Matched: {_engine.MatchCount} / {_engine.TotalPairs}";
         }
 
         UpdatePills();
+        UpdateComboLabel();
     }
 
     // ── Mismatch Found ────────────────────────────────────────────────────
@@ -366,6 +498,16 @@ public class GameForm : Form
     {
         UpdatePills();
         _streakLabel.Text = "Not a match — keep looking! 🙈";
+        UpdateComboLabel();
+
+        // FlipLimit: invalidate affected cards to refresh their overlays
+        if (_modifiers.HasFlag(GameModifier.FlipLimit))
+        {
+            FindControl(e.First)?.Invalidate();
+            FindControl(e.Second)?.Invalidate();
+            if (e.Third != null) FindControl(e.Third)?.Invalidate();
+        }
+
         _mismatchTimer.Start();
     }
 
@@ -374,16 +516,67 @@ public class GameForm : Form
         _mismatchTimer.Stop();
         _engine.FlipDownMismatch();
 
-        // Flip the two face-up non-matched controls back
-        // Refresh all non-matched controls
         foreach (var ctrl in _cardControls)
             if (!ctrl.CardData.IsMatched) ctrl.Invalidate();
+    }
+
+    // ── Hardcore Game Over ────────────────────────────────────────────────
+    private void Engine_GameOverHardcore(object? sender, EventArgs e)
+    {
+        if (_isClosing) return;
+        _timer.Stop();
+        StopModifierTimers();
+
+        ShowToast("💀 Hardcore: Game Over!");
+        _streakLabel.Text = "One wrong flip ended the run! 💀";
+
+        // Brief pause so the player sees the mismatch before the dialog
+        Task.Delay(1000).ContinueWith(_ =>
+        {
+            if (IsDisposed || _isClosing) return;
+            Invoke(() =>
+            {
+                var winForm = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score,
+                                          _difficulty, timeUp: true);
+                winForm.ShowDialog(this);
+                GameFinished?.Invoke(this, _engine.Score);
+                if (winForm.PlayAgain) StartGame();
+                else Close();
+            });
+        });
+    }
+
+    // ── CardDrift ─────────────────────────────────────────────────────────
+    private void Engine_CardsDrifted(object? sender, DriftEventArgs e)
+    {
+        if (_isClosing) return;
+
+        // Remap controls to the new deck order
+        var newOrder = e.NewOrder;
+        var oldControls = _cardControls.ToList();
+
+        // Build a lookup from CardBase → control
+        var lookup = new Dictionary<CardBase, CardControl>(ReferenceEqualityComparer.Instance);
+        foreach (var ctrl in oldControls)
+            lookup[ctrl.CardData] = ctrl;
+
+        // Rebuild _cardControls in new order
+        _cardControls.Clear();
+        foreach (var card in newOrder)
+        {
+            if (lookup.TryGetValue(card, out var ctrl))
+                _cardControls.Add(ctrl);
+        }
+
+        ShowToast("🌀 Cards Shifted!");
+        RepositionCards();
     }
 
     // ── Game Won ──────────────────────────────────────────────────────────
     private void Engine_GameWon(object? sender, EventArgs e)
     {
         _timer.Stop();
+        StopModifierTimers();
         LaunchConfetti();
 
         var winForm = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score, _difficulty);
@@ -400,28 +593,26 @@ public class GameForm : Form
     {
         _isClosing = true;
         _timer.Stop();
+        StopModifierTimers();
     }
 
     private void Timer_Tick(object? sender, TimerTickEventArgs e)
     {
         _pillTime.SetValue($"{e.Remaining}s");
 
-        // Update progress bar
         int newW = (int)(_timerBarWrap.Width * e.RemainingFraction);
         _timerBarFill.Width = Math.Max(0, newW);
-
-        // Warn when low
         _timerBarFill.BackColor = e.RemainingFraction < 0.3f ? ColRed : ColTeal;
     }
 
     private void Timer_TimeUp(object? sender, EventArgs e)
     {
-        // Prevent timer events from executing after the form has started closing
         if (_isClosing) return;
 
         _pillTime.SetValue("0s");
         ShowToast("⏰ Time's Up!");
         _streakLabel.Text = "Time's up! Better luck next time 🙈";
+        StopModifierTimers();
 
         var winForm = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score,
                                   _difficulty, timeUp: true);
@@ -432,7 +623,7 @@ public class GameForm : Form
         else Close();
     }
 
-    // ── Toast ─────────────────────────────────────────────────────────────
+    // ── UI Helpers ────────────────────────────────────────────────────────
     private void ShowToast(string message)
     {
         _toastLabel.Text    = message;
@@ -440,6 +631,36 @@ public class GameForm : Form
         _toastLabel.BringToFront();
         _toastTimer.Stop();
         _toastTimer.Start();
+    }
+
+    private void UpdatePills()
+    {
+        _pillMatches.SetValue(_engine.MatchCount.ToString());
+        _pillMoves  .SetValue(_engine.MoveCount .ToString());
+        _pillScore  .SetValue(_engine.Score     .ToString());
+    }
+
+    private void UpdateComboLabel()
+    {
+        if (_comboLabel == null) return;
+        int mult = _engine.Score > 0 ? Math.Min(_engine.Streak, 4) : 1;
+        _comboLabel.Text      = $"×{mult}";
+        _comboLabel.ForeColor = mult >= 4 ? ColRed : mult >= 2 ? ColGold : ColTeal;
+    }
+
+    private string BuildStatusText()
+    {
+        var mods = new List<string>();
+        if (_modifiers.HasFlag(GameModifier.ZenMode))         mods.Add("🧘 Zen");
+        if (_modifiers.HasFlag(GameModifier.HardcoreMode))    mods.Add("💀 Hardcore");
+        if (_modifiers.HasFlag(GameModifier.TripleMatch))     mods.Add("🎲 Triple");
+        if (_modifiers.HasFlag(GameModifier.CardDrift))       mods.Add("🌀 Drift");
+        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))  mods.Add("📉 Shrink");
+        if (_modifiers.HasFlag(GameModifier.FlipLimit))       mods.Add("🔒 FlipLimit");
+        if (_modifiers.HasFlag(GameModifier.ComboMultiplier)) mods.Add("⚡ Combo");
+
+        string modsStr = mods.Count > 0 ? "  │  " + string.Join("  ", mods) : "";
+        return $"Find the matching monkey pairs! 🐒{modsStr}";
     }
 
     // ── Confetti ──────────────────────────────────────────────────────────
@@ -471,8 +692,9 @@ public class GameForm : Form
             _confettiPanel.Invalidate();
             if (!any)
             {
-                _confettiTimer.Stop();
-                _confettiTimer.Dispose();
+                _confettiTimer?.Stop();
+                _confettiTimer?.Dispose();
+                _confettiTimer = null;
                 _confettiPanel.SendToBack();
             }
         };
@@ -493,13 +715,6 @@ public class GameForm : Form
     // ── Helpers ───────────────────────────────────────────────────────────
     private CardControl? FindControl(CardBase card) =>
         _cardControls.FirstOrDefault(c => ReferenceEquals(c.CardData, card));
-
-    private void UpdatePills()
-    {
-        _pillMatches.SetValue(_engine.MatchCount.ToString());
-        _pillMoves  .SetValue(_engine.MoveCount .ToString());
-        _pillScore  .SetValue(_engine.Score     .ToString());
-    }
 
     private void PaintTopBar(object? sender, PaintEventArgs e)
     {
@@ -536,6 +751,9 @@ public class GameForm : Form
             _timer.Dispose();
             _mismatchTimer.Dispose();
             _toastTimer.Dispose();
+            StopModifierTimers();
+            _confettiTimer?.Stop();
+            _confettiTimer?.Dispose();
             foreach (var c in _cardControls) c.Dispose();
         }
         base.Dispose(disposing);

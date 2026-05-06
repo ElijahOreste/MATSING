@@ -18,11 +18,11 @@ public class DifficultySelectionForm : Form
     private static readonly Color ColGreen   = Color.FromArgb( 76, 175,  80);
 
     // ── State ─────────────────────────────────────────────────────────────
-    private Difficulty _selectedDifficulty = Difficulty.Easy;
-    private GameModifier _selectedModifiers = GameModifier.None;
+    private Difficulty   _selectedDifficulty = Difficulty.Easy;
+    private GameModifier _selectedModifiers  = GameModifier.None;
     private readonly Dictionary<Difficulty, int> _bestScores;
     private bool _gameWasStarted = false;
-    private int _finalScore = 0;
+    private int  _finalScore     = 0;
 
     // ── Controls ──────────────────────────────────────────────────────────
     private Panel   _headerPanel  = null!;
@@ -31,7 +31,6 @@ public class DifficultySelectionForm : Form
     private Button  _playBtn      = null!;
     private Button  _easyBtn      = null!, _medBtn = null!, _hardBtn = null!;
     private Dictionary<GameModifier, Button> _modifierButtons = new();
-    private GameForm? _gameForm = null;
 
     // Logo animation
     private System.Windows.Forms.Timer _logoTimer = null!;
@@ -56,7 +55,7 @@ public class DifficultySelectionForm : Form
     private void InitialiseForm()
     {
         Text            = "MATSING – Select Difficulty & Modifiers";
-        Size            = new Size(900, 700);
+        Size            = new Size(900, 800);
         MinimumSize     = new Size(800, 650);
         StartPosition   = FormStartPosition.CenterScreen;
         BackColor       = ColBg;
@@ -81,10 +80,10 @@ public class DifficultySelectionForm : Form
         // ── Content panel (difficulty + modifiers) ────────────────────────
         _contentPanel = new Panel
         {
-            Dock      = DockStyle.Fill,
-            BackColor = Color.Transparent,
+            Dock       = DockStyle.Fill,
+            BackColor  = Color.Transparent,
             AutoScroll = true,
-            Padding   = new Padding(20),
+            Padding    = new Padding(20),
         };
 
         // Difficulty section
@@ -111,27 +110,19 @@ public class DifficultySelectionForm : Form
         _hardBtn = MakeDiffButton("🔥  Hard",   Difficulty.Hard);
         diffFlow.Controls.AddRange(new Control[] { _easyBtn, _medBtn, _hardBtn });
 
-        // Modifiers section
+        // Modifiers section — use a Panel with absolute layout so buttons get proper width
         var modLabel = new Label
         {
-            Text      = "MODIFIERS (Optional)",
+            Text      = "MODIFIERS",
             Font      = new Font("Segoe UI", 12f, FontStyle.Bold),
             ForeColor = ColTeal,
             BackColor = Color.Transparent,
             AutoSize  = true,
+            Margin    = new Padding(0, 10, 0, 4),
         };
 
-        var modFlow = new FlowLayoutPanel
+        var modifiers = new[]
         {
-            FlowDirection   = FlowDirection.TopDown,
-            AutoSize        = true,
-            AutoSizeMode    = AutoSizeMode.GrowAndShrink,
-            BackColor       = Color.Transparent,
-            Padding         = new Padding(0, 10, 0, 20),
-            WrapContents    = false,
-        };
-
-        var modifiers = new[] {
             GameModifier.CardDrift,
             GameModifier.ShrinkingCards,
             GameModifier.TripleMatch,
@@ -141,10 +132,21 @@ public class DifficultySelectionForm : Form
             GameModifier.ComboMultiplier,
         };
 
+        // Stack modifier buttons in a TableLayoutPanel so they fill the available width
+        var modTable = new TableLayoutPanel
+        {
+            ColumnCount  = 1,
+            AutoSize     = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor    = Color.Transparent,
+            Padding      = new Padding(0, 6, 0, 16),
+        };
+        modTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 820));
+
         foreach (var mod in modifiers)
         {
             var btn = MakeModifierButton(mod);
-            modFlow.Controls.Add(btn);
+            modTable.Controls.Add(btn);
             _modifierButtons[mod] = btn;
         }
 
@@ -160,7 +162,7 @@ public class DifficultySelectionForm : Form
         _playBtn.Click += PlayBtn_Click;
 
         var backBtn = MakePrimaryButton("◀   BACK", ColBg2, ColWhite);
-        backBtn.Click += (_, _) => DialogResult = DialogResult.Cancel;
+        backBtn.Click += (_, _) => Close();
 
         var btnFlow = new FlowLayoutPanel
         {
@@ -176,16 +178,17 @@ public class DifficultySelectionForm : Form
                 (_btnPanel.Width  - btnFlow.PreferredSize.Width)  / 2,
                 (_btnPanel.Height - btnFlow.PreferredSize.Height) / 2);
 
-        // Add controls to content panel
+        // Stack everything vertically inside content panel
         var masterFlow = new FlowLayoutPanel
         {
-            FlowDirection   = FlowDirection.TopDown,
-            AutoSize        = true,
-            AutoSizeMode    = AutoSizeMode.GrowAndShrink,
-            BackColor       = Color.Transparent,
-            Padding         = new Padding(0),
+            FlowDirection = FlowDirection.TopDown,
+            AutoSize      = true,
+            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
+            BackColor     = Color.Transparent,
+            Padding       = new Padding(0),
+            WrapContents  = false,
         };
-        masterFlow.Controls.AddRange(new Control[] { diffLabel, diffFlow, modLabel, modFlow });
+        masterFlow.Controls.AddRange(new Control[] { diffLabel, diffFlow, modLabel, modTable });
         _contentPanel.Controls.Add(masterFlow);
 
         // ── Add to form ───────────────────────────────────────────────────
@@ -200,8 +203,8 @@ public class DifficultySelectionForm : Form
     // ── Logo Animation ────────────────────────────────────────────────────
     private void StartLogoAnimation()
     {
-        _logoTimer          = new System.Windows.Forms.Timer { Interval = 30 };
-        _logoTimer.Tick    += (_, _) =>
+        _logoTimer       = new System.Windows.Forms.Timer { Interval = 30 };
+        _logoTimer.Tick += (_, _) =>
         {
             _logoOffset += _logoUp ? 0.4f : -0.4f;
             if (_logoOffset >  8f) _logoUp = false;
@@ -217,14 +220,12 @@ public class DifficultySelectionForm : Form
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-        // Background
         using var bgBrush = new SolidBrush(ColBg);
         g.FillRectangle(bgBrush, _headerPanel.ClientRectangle);
 
         float cy = _headerPanel.Height / 2f - 20 + _logoOffset;
 
-        // Shadow of logo text
-        using var shadowFont = new Font("Segoe UI Black", 36f, FontStyle.Bold, GraphicsUnit.Point);
+        using var shadowFont  = new Font("Segoe UI Black", 36f, FontStyle.Bold, GraphicsUnit.Point);
         using var shadowBrush = new SolidBrush(Color.FromArgb(80, ColRed));
         string logo = "CHOOSE YOUR CHALLENGE";
         var    sz   = g.MeasureString(logo, shadowFont);
@@ -232,7 +233,6 @@ public class DifficultySelectionForm : Form
         float  ly   = cy - sz.Height / 2f;
         g.DrawString(logo, shadowFont, shadowBrush, lx + 5, ly + 5);
 
-        // Main logo
         using var logoFont  = new Font("Segoe UI Black", 36f, FontStyle.Bold, GraphicsUnit.Point);
         using var logoBrush = new SolidBrush(ColGold);
         g.DrawString(logo, logoFont, logoBrush, lx, ly);
@@ -266,27 +266,28 @@ public class DifficultySelectionForm : Form
     {
         string text = mod switch
         {
-            GameModifier.CardDrift      => "🌀 Card Drift (cards swap every 20s)",
-            GameModifier.ShrinkingCards => "📉 Shrinking Cards (cards shrink over time)",
-            GameModifier.TripleMatch    => "🎲 Triple Match (match 3 instead of 2)",
-            GameModifier.FlipLimit      => "🔒 Flip Limit (each card flips 2 times max)",
-            GameModifier.ZenMode        => "🧘 Zen Mode (no timer, no penalties)",
-            GameModifier.HardcoreMode   => "💀 Hardcore (one wrong flip ends game)",
+            GameModifier.CardDrift       => "🌀 Card Drift (cards swap positions every 20s)",
+            GameModifier.ShrinkingCards  => "📉 Shrinking Cards (cards shrink over time)",
+            GameModifier.TripleMatch     => "🎲 Triple Match (match 3 identical cards)",
+            GameModifier.FlipLimit       => "🔒 Flip Limit (each card flips 2× max)",
+            GameModifier.ZenMode         => "🧘 Zen Mode (no timer, pure relaxation)",
+            GameModifier.HardcoreMode    => "💀 Hardcore (one wrong flip ends the game)",
             GameModifier.ComboMultiplier => "⚡ Combo Multiplier (build ×2, ×3, ×4 bonus)",
-            _ => "Unknown"
+            _                            => "Unknown"
         };
 
         var btn = new Button
         {
             Text      = text,
-            Height    = 44,
+            Size      = new Size(820, 44),
             FlatStyle = FlatStyle.Flat,
             BackColor = ColBg2,
             ForeColor = Color.Silver,
             Font      = new Font("Segoe UI", 10f),
             Cursor    = Cursors.Hand,
             Margin    = new Padding(0, 4, 0, 4),
-            Dock      = DockStyle.Top,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding   = new Padding(12, 0, 0, 0),
         };
         btn.FlatAppearance.BorderColor = Color.FromArgb(59, 24, 120);
         btn.FlatAppearance.BorderSize  = 2;
@@ -297,7 +298,7 @@ public class DifficultySelectionForm : Form
                 _selectedModifiers &= ~mod;
             else
                 _selectedModifiers |= mod;
-            
+
             HighlightModifiers();
         };
         return btn;
@@ -330,8 +331,8 @@ public class DifficultySelectionForm : Form
             (_hardBtn, Difficulty.Hard) })
         {
             bool active = d == diff;
-            btn.BackColor = active ? ColRed    : ColBg2;
-            btn.ForeColor = active ? ColWhite  : Color.Silver;
+            btn.BackColor = active ? ColRed   : ColBg2;
+            btn.ForeColor = active ? ColWhite : Color.Silver;
             btn.FlatAppearance.BorderColor = active ? ColRed : Color.FromArgb(59, 24, 120);
         }
     }
@@ -350,32 +351,29 @@ public class DifficultySelectionForm : Form
     // ── Play Button ───────────────────────────────────────────────────────
     private void PlayBtn_Click(object? sender, EventArgs e)
     {
-        // Dispose old game form if it still exists
-        _gameForm?.Dispose();
+        // FIX: hide this form, show GameForm modally, then close self when done
+        this.Hide();
 
-        _gameForm = new GameForm(_selectedDifficulty);
-        _gameForm.GameFinished += (_, score) =>
+        var gameForm = new GameForm(_selectedDifficulty, _selectedModifiers);
+        gameForm.GameFinished += (_, score) =>
         {
-            _finalScore = score;
+            _finalScore     = score;
             _gameWasStarted = true;
         };
-        
-        _gameForm.ShowDialog(this);
-        _gameForm?.Dispose();
-        _gameForm = null;
 
-        // After game closes, close this form to return to main menu
-        if (_gameWasStarted)
-        {
-            this.Close();
-        }
+        gameForm.ShowDialog(); // blocks until game form closes
+        gameForm.Dispose();
+
+        // After game ends, close this form so MainMenu can show itself
+        // (MainMenu is listening to our FormClosed event)
+        this.Close();
     }
 
     // ── Public properties ─────────────────────────────────────────────────
-    public Difficulty SelectedDifficulty => _selectedDifficulty;
-    public GameModifier SelectedModifiers => _selectedModifiers;
-    public bool GameWasStarted => _gameWasStarted;
-    public int FinalScore => _finalScore;
+    public Difficulty   SelectedDifficulty => _selectedDifficulty;
+    public GameModifier SelectedModifiers  => _selectedModifiers;
+    public bool         GameWasStarted     => _gameWasStarted;
+    public int          FinalScore         => _finalScore;
 
     // ── Dispose ───────────────────────────────────────────────────────────
     protected override void Dispose(bool disposing)
@@ -384,7 +382,6 @@ public class DifficultySelectionForm : Form
         {
             _logoTimer?.Stop();
             _logoTimer?.Dispose();
-            _gameForm?.Dispose();
         }
         base.Dispose(disposing);
     }
