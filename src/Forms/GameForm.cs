@@ -1,6 +1,7 @@
 using MATSING.Controls;
 using MATSING.Game;
 using MATSING.Models;
+using MATSING.Utils;
 
 namespace MATSING.Forms;
 
@@ -149,8 +150,18 @@ public class GameForm : Form
         }
 
         // Right-side buttons
-        var newBtn  = MakeTopButton("↺ New",  (_, _) => StartGame());
-        var menuBtn = MakeTopButton("⌂ Menu", (_, _) => Close());
+        var newBtn  = MakeTopButton("↺ New",  (_, _) => { SfxPlayer.PlayClick(); StartGame(); });
+        var menuBtn = MakeTopButton("⌂ Menu", (_, _) => { SfxPlayer.PlayClick(); Close(); });
+        var muteBtn = MakeTopButton("🔊 Mute", null!);
+        muteBtn.Click += (_, _) =>
+        {
+            SfxPlayer.Muted    = !SfxPlayer.Muted;
+            muteBtn.Text       = SfxPlayer.Muted ? "🔇 Unmute" : "🔊 Mute";
+            muteBtn.BackColor  = SfxPlayer.Muted
+                ? Color.FromArgb(100, 30, 30)
+                : Color.FromArgb(59, 24, 120);
+            if (!SfxPlayer.Muted) SfxPlayer.PlayClick();
+        };
 
         var rightFlow = new FlowLayoutPanel
         {
@@ -158,7 +169,7 @@ public class GameForm : Form
             AutoSize      = true,
             BackColor     = Color.Transparent,
         };
-        rightFlow.Controls.AddRange(new Control[] { newBtn, menuBtn });
+        rightFlow.Controls.AddRange(new Control[] { muteBtn, newBtn, menuBtn });
 
         _topBar.Controls.Add(pillFlow);
         _topBar.Controls.Add(rightFlow);
@@ -455,8 +466,21 @@ public class GameForm : Form
     private void Card_Clicked(object? sender, CardBase card)
     {
         if (sender is not CardControl ctrl) return;
+
+        // Check for FlipLimit rejection before calling engine (so we can play the right sound)
+        bool isFlipLimitBlocked = _modifiers.HasFlag(GameModifier.FlipLimit)
+                                && !card.IsMatched && !card.IsFaceUp
+                                && _engine.FlipsRemaining(card) <= 0;
+
         bool accepted = _engine.OnCardSelected(card, _timer.Elapsed);
-        if (!accepted) return;
+
+        if (!accepted)
+        {
+            if (isFlipLimitBlocked) SfxPlayer.PlayFlipLimit();
+            return;
+        }
+
+        SfxPlayer.PlayFlip();
 
         // POLYMORPHISM: ctrl is MonkeyCardControl OR SpecialCardControl
         ctrl.PlayFlipAnimation();
@@ -477,14 +501,16 @@ public class GameForm : Form
         int streak = _engine.Streak;
         if (streak >= 2)
         {
+            SfxPlayer.PlayCombo(streak); // combo1 for 2×, combo2 for 3×, etc.
             string comboText = _modifiers.HasFlag(GameModifier.ComboMultiplier)
-                ? $"🔥 {streak}x Combo! ×{_engine.Score}" // show multiplier feedback
+                ? $"🔥 {streak}x Combo! ×{_engine.Score}"
                 : $"🔥 {streak}x Combo!";
             ShowToast(comboText);
             _streakLabel.Text = $"🔥 {streak}x Combo Streak!";
         }
         else
         {
+            SfxPlayer.PlayMatch();
             ShowToast("🎯 Match!");
             _streakLabel.Text = $"Matched: {_engine.MatchCount} / {_engine.TotalPairs}";
         }
@@ -496,6 +522,7 @@ public class GameForm : Form
     // ── Mismatch Found ────────────────────────────────────────────────────
     private void Engine_MismatchFound(object? sender, CardPairEventArgs e)
     {
+        SfxPlayer.PlayMismatch();
         UpdatePills();
         _streakLabel.Text = "Not a match — keep looking! 🙈";
         UpdateComboLabel();
@@ -515,6 +542,7 @@ public class GameForm : Form
     {
         _mismatchTimer.Stop();
         _engine.FlipDownMismatch();
+        SfxPlayer.PlayFlipBack();
 
         foreach (var ctrl in _cardControls)
             if (!ctrl.CardData.IsMatched) ctrl.Invalidate();
@@ -527,6 +555,7 @@ public class GameForm : Form
         _timer.Stop();
         StopModifierTimers();
 
+        SfxPlayer.PlayGameOver();
         ShowToast("💀 Hardcore: Game Over!");
         _streakLabel.Text = "One wrong flip ended the run! 💀";
 
@@ -552,15 +581,13 @@ public class GameForm : Form
         if (_isClosing) return;
 
         // Remap controls to the new deck order
-        var newOrder = e.NewOrder;
+        var newOrder    = e.NewOrder;
         var oldControls = _cardControls.ToList();
 
-        // Build a lookup from CardBase → control
         var lookup = new Dictionary<CardBase, CardControl>(ReferenceEqualityComparer.Instance);
         foreach (var ctrl in oldControls)
             lookup[ctrl.CardData] = ctrl;
 
-        // Rebuild _cardControls in new order
         _cardControls.Clear();
         foreach (var card in newOrder)
         {
@@ -568,6 +595,7 @@ public class GameForm : Form
                 _cardControls.Add(ctrl);
         }
 
+        SfxPlayer.PlayShuffle();
         ShowToast("🌀 Cards Shifted!");
         RepositionCards();
     }
@@ -577,6 +605,7 @@ public class GameForm : Form
     {
         _timer.Stop();
         StopModifierTimers();
+        SfxPlayer.PlayGameWin();
         LaunchConfetti();
 
         var winForm = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score, _difficulty);
@@ -596,13 +625,29 @@ public class GameForm : Form
         StopModifierTimers();
     }
 
+    private bool _beepedThisTick = false; // prevent firing beep every tick
+
     private void Timer_Tick(object? sender, TimerTickEventArgs e)
     {
         _pillTime.SetValue($"{e.Remaining}s");
 
         int newW = (int)(_timerBarWrap.Width * e.RemainingFraction);
-        _timerBarFill.Width = Math.Max(0, newW);
+        _timerBarFill.Width     = Math.Max(0, newW);
         _timerBarFill.BackColor = e.RemainingFraction < 0.3f ? ColRed : ColTeal;
+
+        // Countdown beep: play once per second when in the danger zone (≤10s)
+        if (e.Remaining <= 10 && e.Remaining > 0)
+        {
+            if (!_beepedThisTick)
+            {
+                SfxPlayer.PlayCountdownBeep();
+                _beepedThisTick = true;
+            }
+        }
+        else
+        {
+            _beepedThisTick = false;
+        }
     }
 
     private void Timer_TimeUp(object? sender, EventArgs e)
@@ -610,6 +655,7 @@ public class GameForm : Form
         if (_isClosing) return;
 
         _pillTime.SetValue("0s");
+        SfxPlayer.PlayGameOver();
         ShowToast("⏰ Time's Up!");
         _streakLabel.Text = "Time's up! Better luck next time 🙈";
         StopModifierTimers();

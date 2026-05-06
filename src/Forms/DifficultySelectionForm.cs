@@ -1,4 +1,5 @@
 using MATSING.Models;
+using MATSING.Utils;
 
 namespace MATSING.Forms;
 
@@ -55,7 +56,7 @@ public class DifficultySelectionForm : Form
     private void InitialiseForm()
     {
         Text            = "MATSING – Select Difficulty & Modifiers";
-        Size            = new Size(900, 800);
+        Size            = new Size(900, 700);
         MinimumSize     = new Size(800, 650);
         StartPosition   = FormStartPosition.CenterScreen;
         BackColor       = ColBg;
@@ -68,93 +69,20 @@ public class DifficultySelectionForm : Form
     // ── UI Construction ───────────────────────────────────────────────────
     private void BuildUI()
     {
-        // ── Header panel (custom paint for logo) ──────────────────────────
+        // ── Header panel ──────────────────────────────────────────────────
         _headerPanel = new Panel
         {
             Dock      = DockStyle.Top,
-            Height    = 140,
+            Height    = 130,
             BackColor = Color.Transparent,
         };
         _headerPanel.Paint += PaintHeader;
 
-        // ── Content panel (difficulty + modifiers) ────────────────────────
-        _contentPanel = new Panel
-        {
-            Dock       = DockStyle.Fill,
-            BackColor  = Color.Transparent,
-            AutoScroll = true,
-            Padding    = new Padding(20),
-        };
-
-        // Difficulty section
-        var diffLabel = new Label
-        {
-            Text      = "DIFFICULTY",
-            Font      = new Font("Segoe UI", 12f, FontStyle.Bold),
-            ForeColor = ColGold,
-            BackColor = Color.Transparent,
-            AutoSize  = true,
-        };
-
-        var diffFlow = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize      = true,
-            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
-            BackColor     = Color.Transparent,
-            Padding       = new Padding(0, 10, 0, 20),
-        };
-
-        _easyBtn = MakeDiffButton("🐒  Easy",   Difficulty.Easy);
-        _medBtn  = MakeDiffButton("🧠  Medium", Difficulty.Medium);
-        _hardBtn = MakeDiffButton("🔥  Hard",   Difficulty.Hard);
-        diffFlow.Controls.AddRange(new Control[] { _easyBtn, _medBtn, _hardBtn });
-
-        // Modifiers section — use a Panel with absolute layout so buttons get proper width
-        var modLabel = new Label
-        {
-            Text      = "MODIFIERS",
-            Font      = new Font("Segoe UI", 12f, FontStyle.Bold),
-            ForeColor = ColTeal,
-            BackColor = Color.Transparent,
-            AutoSize  = true,
-            Margin    = new Padding(0, 10, 0, 4),
-        };
-
-        var modifiers = new[]
-        {
-            GameModifier.CardDrift,
-            GameModifier.ShrinkingCards,
-            GameModifier.TripleMatch,
-            GameModifier.FlipLimit,
-            GameModifier.ZenMode,
-            GameModifier.HardcoreMode,
-            GameModifier.ComboMultiplier,
-        };
-
-        // Stack modifier buttons in a TableLayoutPanel so they fill the available width
-        var modTable = new TableLayoutPanel
-        {
-            ColumnCount  = 1,
-            AutoSize     = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor    = Color.Transparent,
-            Padding      = new Padding(0, 6, 0, 16),
-        };
-        modTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 820));
-
-        foreach (var mod in modifiers)
-        {
-            var btn = MakeModifierButton(mod);
-            modTable.Controls.Add(btn);
-            _modifierButtons[mod] = btn;
-        }
-
-        // ── Buttons panel ─────────────────────────────────────────────────
+        // ── Bottom button bar ─────────────────────────────────────────────
         _btnPanel = new Panel
         {
             Dock      = DockStyle.Bottom,
-            Height    = 110,
+            Height    = 90,
             BackColor = Color.Transparent,
         };
 
@@ -162,7 +90,7 @@ public class DifficultySelectionForm : Form
         _playBtn.Click += PlayBtn_Click;
 
         var backBtn = MakePrimaryButton("◀   BACK", ColBg2, ColWhite);
-        backBtn.Click += (_, _) => Close();
+        backBtn.Click += (_, _) => { SfxPlayer.PlayClick(); Close(); };
 
         var btnFlow = new FlowLayoutPanel
         {
@@ -178,18 +106,112 @@ public class DifficultySelectionForm : Form
                 (_btnPanel.Width  - btnFlow.PreferredSize.Width)  / 2,
                 (_btnPanel.Height - btnFlow.PreferredSize.Height) / 2);
 
-        // Stack everything vertically inside content panel
-        var masterFlow = new FlowLayoutPanel
+        // ── Content panel — centred canvas ────────────────────────────────
+        _contentPanel = new Panel
         {
-            FlowDirection = FlowDirection.TopDown,
-            AutoSize      = true,
-            AutoSizeMode  = AutoSizeMode.GrowAndShrink,
-            BackColor     = Color.Transparent,
-            Padding       = new Padding(0),
-            WrapContents  = false,
+            Dock       = DockStyle.Fill,
+            BackColor  = Color.Transparent,
+            AutoScroll = true,
         };
-        masterFlow.Controls.AddRange(new Control[] { diffLabel, diffFlow, modLabel, modTable });
-        _contentPanel.Controls.Add(masterFlow);
+
+        // Inner container that is centred inside _contentPanel on resize
+        var inner = new Panel
+        {
+            BackColor = Color.Transparent,
+            Width     = 760,
+            AutoSize  = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+
+        // ── DIFFICULTY label + 3 buttons ─────────────────────────────────
+        var diffLabel = new Label
+        {
+            Text      = "DIFFICULTY",
+            Font      = new Font("Segoe UI", 11f, FontStyle.Bold),
+            ForeColor = ColGold,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(0, 8),
+        };
+
+        _easyBtn = MakeDiffButton("🐒  Easy",   Difficulty.Easy);
+        _medBtn  = MakeDiffButton("🧠  Medium", Difficulty.Medium);
+        _hardBtn = MakeDiffButton("🔥  Hard",   Difficulty.Hard);
+
+        // Space the three diff buttons evenly across inner width
+        int diffBtnW = 220, diffBtnH = 52, diffGap = 16;
+        int diffRowW = 3 * diffBtnW + 2 * diffGap;
+        int diffOffX = (760 - diffRowW) / 2;
+        int diffY    = 36;
+        _easyBtn.SetBounds(diffOffX,                     diffY, diffBtnW, diffBtnH);
+        _medBtn .SetBounds(diffOffX + diffBtnW + diffGap, diffY, diffBtnW, diffBtnH);
+        _hardBtn.SetBounds(diffOffX + 2*(diffBtnW+diffGap), diffY, diffBtnW, diffBtnH);
+
+        // ── MODIFIERS label + 2-col grid ─────────────────────────────────
+        var modLabel = new Label
+        {
+            Text      = "MODIFIERS  (toggle on/off)",
+            Font      = new Font("Segoe UI", 11f, FontStyle.Bold),
+            ForeColor = ColTeal,
+            BackColor = Color.Transparent,
+            AutoSize  = true,
+            Location  = new Point(0, diffY + diffBtnH + 18),
+        };
+
+        var modifiers = new[]
+        {
+            GameModifier.CardDrift,
+            GameModifier.ShrinkingCards,
+            GameModifier.TripleMatch,
+            GameModifier.FlipLimit,
+            GameModifier.ZenMode,
+            GameModifier.HardcoreMode,
+            GameModifier.ComboMultiplier,
+        };
+
+        // 2-column grid: each button ~370px wide, 8px gap
+        int modBtnW = 370, modBtnH = 46, modGapX = 16, modGapY = 8;
+        int modStartY = modLabel.Location.Y + 28;
+        int col0X = (760 - (2 * modBtnW + modGapX)) / 2;
+        int col1X = col0X + modBtnW + modGapX;
+
+        for (int i = 0; i < modifiers.Length; i++)
+        {
+            var mod = modifiers[i];
+            int col  = i % 2;
+            int row  = i / 2;
+            int bx   = col == 0 ? col0X : col1X;
+            int by   = modStartY + row * (modBtnH + modGapY);
+
+            var btn = MakeModifierButton(mod);
+            btn.SetBounds(bx, by, modBtnW, modBtnH);
+            inner.Controls.Add(btn);
+            _modifierButtons[mod] = btn;
+        }
+
+        // Last modifier (7th = ComboMultiplier) is alone in col 0 — stretch it full width
+        if (modifiers.Length % 2 == 1)
+        {
+            var lastBtn = _modifierButtons[modifiers[^1]];
+            lastBtn.SetBounds(col0X, lastBtn.Top, 2 * modBtnW + modGapX, modBtnH);
+        }
+
+        // Set inner height to fit everything
+        int lastModRow = (modifiers.Length - 1) / 2;
+        int innerH     = modStartY + (lastModRow + 1) * (modBtnH + modGapY) + 10;
+        inner.Height   = innerH;
+
+        inner.Controls.AddRange(new Control[]
+            { diffLabel, _easyBtn, _medBtn, _hardBtn, modLabel });
+
+        _contentPanel.Controls.Add(inner);
+
+        // Centre inner horizontally and vertically on resize
+        _contentPanel.Resize += (_, _) =>
+        {
+            inner.Left = Math.Max(0, (_contentPanel.Width - inner.Width) / 2);
+            inner.Top  = Math.Max(8, (_contentPanel.Height - inner.Height) / 2);
+        };
 
         // ── Add to form ───────────────────────────────────────────────────
         Controls.Add(_btnPanel);
@@ -244,18 +266,17 @@ public class DifficultySelectionForm : Form
         var btn = new Button
         {
             Text      = text,
-            Size      = new Size(160, 50),
             FlatStyle = FlatStyle.Flat,
             BackColor = ColBg2,
             ForeColor = Color.Silver,
             Font      = new Font("Segoe UI", 11f, FontStyle.Bold),
             Cursor    = Cursors.Hand,
-            Margin    = new Padding(8, 0, 8, 0),
         };
         btn.FlatAppearance.BorderColor = Color.FromArgb(59, 24, 120);
         btn.FlatAppearance.BorderSize  = 2;
         btn.Click += (_, _) =>
         {
+            SfxPlayer.PlayClick();
             _selectedDifficulty = diff;
             HighlightDiffButton(diff);
         };
@@ -266,34 +287,49 @@ public class DifficultySelectionForm : Form
     {
         string text = mod switch
         {
-            GameModifier.CardDrift       => "🌀 Card Drift (cards swap positions every 20s)",
-            GameModifier.ShrinkingCards  => "📉 Shrinking Cards (cards shrink over time)",
-            GameModifier.TripleMatch     => "🎲 Triple Match (match 3 identical cards)",
-            GameModifier.FlipLimit       => "🔒 Flip Limit (each card flips 2× max)",
-            GameModifier.ZenMode         => "🧘 Zen Mode (no timer, pure relaxation)",
-            GameModifier.HardcoreMode    => "💀 Hardcore (one wrong flip ends the game)",
-            GameModifier.ComboMultiplier => "⚡ Combo Multiplier (build ×2, ×3, ×4 bonus)",
+            GameModifier.CardDrift       => "🌀  Card Drift",
+            GameModifier.ShrinkingCards  => "📉  Shrinking Cards",
+            GameModifier.TripleMatch     => "🎲  Triple Match",
+            GameModifier.FlipLimit       => "🔒  Flip Limit",
+            GameModifier.ZenMode         => "🧘  Zen Mode",
+            GameModifier.HardcoreMode    => "💀  Hardcore",
+            GameModifier.ComboMultiplier => "⚡  Combo Multiplier",
             _                            => "Unknown"
+        };
+
+        string tooltip = mod switch
+        {
+            GameModifier.CardDrift       => "Cards swap positions every 20s",
+            GameModifier.ShrinkingCards  => "Cards shrink smaller over time",
+            GameModifier.TripleMatch     => "Must match 3 identical cards",
+            GameModifier.FlipLimit       => "Each card can only be flipped twice",
+            GameModifier.ZenMode         => "No timer — pure relaxation",
+            GameModifier.HardcoreMode    => "One wrong flip ends the game",
+            GameModifier.ComboMultiplier => "Build ×2, ×3, ×4 score bonus",
+            _                            => ""
         };
 
         var btn = new Button
         {
             Text      = text,
-            Size      = new Size(820, 44),
             FlatStyle = FlatStyle.Flat,
             BackColor = ColBg2,
             ForeColor = Color.Silver,
-            Font      = new Font("Segoe UI", 10f),
+            Font      = new Font("Segoe UI", 10f, FontStyle.Bold),
             Cursor    = Cursors.Hand,
-            Margin    = new Padding(0, 4, 0, 4),
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding   = new Padding(12, 0, 0, 0),
+            Padding   = new Padding(10, 0, 0, 0),
         };
         btn.FlatAppearance.BorderColor = Color.FromArgb(59, 24, 120);
         btn.FlatAppearance.BorderSize  = 2;
+
+        // Show tooltip with description on hover
+        var tips = new ToolTip();
+        tips.SetToolTip(btn, tooltip);
+
         btn.Click += (_, _) =>
         {
-            // Toggle this modifier on/off
+            SfxPlayer.PlayClick();
             if (_selectedModifiers.HasFlag(mod))
                 _selectedModifiers &= ~mod;
             else
@@ -351,7 +387,7 @@ public class DifficultySelectionForm : Form
     // ── Play Button ───────────────────────────────────────────────────────
     private void PlayBtn_Click(object? sender, EventArgs e)
     {
-        // FIX: hide this form, show GameForm modally, then close self when done
+        SfxPlayer.PlayClick();
         this.Hide();
 
         var gameForm = new GameForm(_selectedDifficulty, _selectedModifiers);

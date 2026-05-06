@@ -1,4 +1,5 @@
 using MATSING.Models;
+using MATSING.Utils;
 
 namespace MATSING.Forms;
 
@@ -80,10 +81,10 @@ public class MainMenuForm : Form
         startBtn.Click += StartBtn_Click;
 
         var statsBtn = MakePrimaryButton("📊   STATS",     ColTeal,  ColBg);
-        statsBtn.Click += (_, _) => ShowStats();
+        statsBtn.Click += (_, _) => { SfxPlayer.PlayClick(); ShowStats(); };
 
         var quitBtn  = MakePrimaryButton("✕   QUIT",       ColBg2,   ColWhite);
-        quitBtn.Click += (_, _) => Application.Exit();
+        quitBtn.Click += (_, _) => { SfxPlayer.PlayClick(); Application.Exit(); };
 
         var btnFlow = new FlowLayoutPanel
         {
@@ -174,6 +175,7 @@ public class MainMenuForm : Form
     // ── Start Button ──────────────────────────────────────────────────────
     private void StartBtn_Click(object? sender, EventArgs e)
     {
+        SfxPlayer.PlayClick();
         // FIX: Use ShowDialog so this form stays the application root but is
         // hidden while child forms run. Child forms close themselves when done;
         // control returns here and we update best scores then repaint.
