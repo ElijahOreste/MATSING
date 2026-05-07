@@ -442,6 +442,12 @@ public class GameForm : Form
         FindCtrl(e.Second)?.PlayMatchAnimation();
         if (e.Third != null) FindCtrl(e.Third)?.PlayMatchAnimation();
 
+        // Grow cards temporarily in shrinking mode when match found
+        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))
+        {
+            GrowCardsTemporarily();
+        }
+
         int streak = _engine.Streak;
         if (streak >= 2)
         {
@@ -593,6 +599,13 @@ public class GameForm : Form
         int nH = Math.Max(50, (int)(_cardBaseH * _shrinkScale));
         foreach (var c in _cardControls) c.Size = new Size(nW, nH);
         RepositionCards();
+    }
+
+    private void GrowCardsTemporarily()
+    {
+        // Temporarily increase shrink scale when a match is found
+        _shrinkScale = Math.Min(2.0f, _shrinkScale + 0.05f);
+        ApplyShrink();
     }
 
     // ── Confetti ──────────────────────────────────────────────────────────
