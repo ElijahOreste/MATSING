@@ -3,36 +3,12 @@ using MATSING.Utils;
 
 namespace MATSING.Game;
 
-// ═══════════════════════════════════════════════════════════════
-//  AOOP PRINCIPLE #2 — ENCAPSULATION  (primary showcase)
-//  ALL game state lives here as private fields.
-//  The outside world cannot touch _deck, _firstFlipped,
-//  _boardLocked, etc. directly — it can only call the public API
-//  and listen to the public Events.
-//
-//  AOOP PRINCIPLE #1 — ABSTRACTION (usage)
-//  GameEngine works entirely with CardBase references —
-//  it never cares whether the card is MonkeyCard or SpecialCard.
-// ═══════════════════════════════════════════════════════════════
-
-/// <summary>
-/// <b>ENCAPSULATION</b> — GameEngine<br/>
-/// The single source of truth for all in-progress game state.
-/// <list type="bullet">
-///   <item><description>All mutable state fields are <c>private</c>.</description></item>
-///   <item><description>External code interacts ONLY via the public method API and C# events.</description></item>
-///   <item><description>No external class can corrupt the board-lock, match count, or flip pair.</description></item>
-/// </list>
-/// </summary>
 public class GameEngine
 {
-    // ═══════════════════════════════════════════════════════════════
-    //  PRIVATE STATE — the encapsulated core
-    // ═══════════════════════════════════════════════════════════════
+    // ── Private state ─────────────────────────────────────────────────────
     private List<CardBase>   _deck          = new();
     private CardBase?        _firstFlipped;
     private CardBase?        _secondFlipped;
-    private CardBase?        _thirdFlipped;      // TripleMatch support
     private int              _matchCount;
     private int              _moveCount;
     private bool             _boardLocked;
@@ -40,128 +16,123 @@ public class GameEngine
     private DifficultyConfig _config        = DifficultyConfig.For(Difficulty.Easy);
     private GameModifier     _modifiers     = GameModifier.None;
 
-    // FlipLimit state — tracks per-card remaining flips
-    private Dictionary<CardBase, int> _flipLimits = new();
-    private const int FLIP_LIMIT_MAX = 2;
+    // Hearts (HardcoreMode)
+    private int _hearts;
+    private int _maxHearts;
 
-    // ── Collaborators (also private) ──────────────────────────────────────
+    // GhostCard: set of cards currently showing blank face
+    private readonly HashSet<CardBase> _ghostedCards = new(ReferenceEqualityComparer.Instance);
+    private readonly Random _rng = new();
+    private const float GHOST_CHANCE = 0.40f;
+
+    // MemoryLeakMode: decoy cards (have CardId = -1, no match)
+    private readonly HashSet<CardBase> _decoyCards = new(ReferenceEqualityComparer.Instance);
+
+    // EndlessMode: how many boards completed
+    private int _boardsCompleted;
+
     private readonly ScoreTracker _score = new();
 
-    // ═══════════════════════════════════════════════════════════════
-    //  PUBLIC EVENTS — the only window into game state changes
-    // ═══════════════════════════════════════════════════════════════
-    /// <summary>Fired when a matching pair (or triple) is found.</summary>
-    public event EventHandler<CardPairEventArgs>? MatchFound;
+    // ── Public Events ─────────────────────────────────────────────────────
+    public event EventHandler<CardPairEventArgs>?  MatchFound;
+    public event EventHandler<CardPairEventArgs>?  MismatchFound;
+    public event EventHandler?                     GameWon;
+    public event EventHandler?                     GameOverHardcore;
+    public event EventHandler<DriftEventArgs>?     CardsDrifted;
+    public event EventHandler?                     NewBoardDealt;       // EndlessMode
+    public event EventHandler<CardBase>?           GhostRevealReady;   // GhostCard: real face ready
+    public event EventHandler<HeartsChangedArgs>?  HeartsChanged;      // HardcoreMode hearts
 
-    /// <summary>Fired when the flipped cards don't match.</summary>
-    public event EventHandler<CardPairEventArgs>? MismatchFound;
+    // ── Public Read-Only ──────────────────────────────────────────────────
+    public int             MatchCount      => _matchCount;
+    public int             MoveCount       => _moveCount;
+    public int             Score           => _score.Score;
+    public int             Streak          => _score.Streak;
+    public bool            IsComplete      => _matchCount == TotalPairs;
+    public DifficultyConfig Config         => _config;
+    public GameModifier    Modifiers       => _modifiers;
+    public bool            IsZenMode       => _modifiers.HasFlag(GameModifier.ZenMode);
+    public int             TotalPairs      => _deck.Count(c => !_decoyCards.Contains(c)) / 2;
+    public int             Hearts          => _hearts;
+    public int             MaxHearts       => _maxHearts;
+    public int             BoardsCompleted => _boardsCompleted;
 
-    /// <summary>Fired when all pairs have been matched (game complete).</summary>
-    public event EventHandler? GameWon;
+    /// <summary>True if card is a decoy (MemoryLeakMode).</summary>
+    public bool IsDecoy(CardBase card) => _decoyCards.Contains(card);
 
-    /// <summary>Fired when Hardcore Mode ends the game on a mismatch.</summary>
-    public event EventHandler? GameOverHardcore;
+    /// <summary>True if card is currently showing its ghost (blank) face.</summary>
+    public bool IsGhosted(CardBase card) => _ghostedCards.Contains(card);
 
-    /// <summary>Fired when CardDrift swaps card positions (carries the shuffled deck order).</summary>
-    public event EventHandler<DriftEventArgs>? CardsDrifted;
-
-    /// <summary>Fired each second with the current ShrinkingCards scale factor.</summary>
-    // ShrinkTick removed — shrinking is driven by GameForm's own timer, not the engine
-
-    // ═══════════════════════════════════════════════════════════════
-    //  PUBLIC READ-ONLY PROPERTIES — safe views of private state
-    // ═══════════════════════════════════════════════════════════════
-    /// <summary>Number of matched pairs so far.</summary>
-    public int MatchCount  => _matchCount;
-
-    /// <summary>Total moves (pairs of flips) made by the player.</summary>
-    public int MoveCount   => _moveCount;
-
-    /// <summary>Current player score managed by <see cref="ScoreTracker"/>.</summary>
-    public int Score       => _score.Score;
-
-    /// <summary>Current consecutive-match streak.</summary>
-    public int Streak      => _score.Streak;
-
-    /// <summary>Returns true when all pairs have been matched.</summary>
-    public bool IsComplete => _matchCount == TotalPairs;
-
-    /// <summary>The active difficulty configuration.</summary>
-    public DifficultyConfig Config => _config;
-
-    /// <summary>Active game modifiers.</summary>
-    public GameModifier Modifiers => _modifiers;
-
-    /// <summary>True when ZenMode is active (no timer).</summary>
-    public bool IsZenMode => _modifiers.HasFlag(GameModifier.ZenMode);
-
-    /// <summary>Total number of pairs in the current game (varies with TripleMatch).</summary>
-    public int TotalPairs => _modifiers.HasFlag(GameModifier.TripleMatch)
-        ? _deck.Count / 3
-        : _deck.Count / 2;
-
-    /// <summary>Number of cards required per match (2 normally, 3 with TripleMatch).</summary>
-    public int MatchGroupSize => _modifiers.HasFlag(GameModifier.TripleMatch) ? 3 : 2;
-
-    /// <summary>Remaining flips for a given card, or -1 if FlipLimit not active.</summary>
-    public int FlipsRemaining(CardBase card) =>
-        _modifiers.HasFlag(GameModifier.FlipLimit) && _flipLimits.TryGetValue(card, out int r) ? r : -1;
-
-    // ═══════════════════════════════════════════════════════════════
-    //  PUBLIC API
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Initialises a new game: builds the master deck, selects pairs
-    /// based on difficulty, shuffles, and resets all private state.
-    /// </summary>
+    // ── StartNewGame ──────────────────────────────────────────────────────
     public void StartNewGame(Difficulty difficulty, GameModifier modifiers = GameModifier.None)
     {
-        _difficulty   = difficulty;
-        _modifiers    = modifiers;
-        _config       = DifficultyConfig.For(difficulty);
-        _matchCount   = 0;
-        _moveCount    = 0;
-        _boardLocked  = false;
-        _firstFlipped = null;
-        _secondFlipped= null;
-        _thirdFlipped = null;
+        _difficulty       = difficulty;
+        _modifiers        = modifiers;
+        _config           = DifficultyConfig.For(difficulty);
+        _matchCount       = 0;
+        _moveCount        = 0;
+        _boardsCompleted  = 0;
+        _boardLocked      = false;
+        _firstFlipped     = null;
+        _secondFlipped    = null;
         _score.Reset(_modifiers.HasFlag(GameModifier.ComboMultiplier));
-        _flipLimits.Clear();
+        _ghostedCards.Clear();
+        _decoyCards.Clear();
 
-        // Build master deck of all 9 unique monkey cards
-        var master = BuildMasterDeck();
-
-        // Pick as many unique cards as needed, then duplicate for pairs/triples
-        int groupSize = _modifiers.HasFlag(GameModifier.TripleMatch) ? 3 : 2;
-        var selected  = ShuffleHelper.Shuffle(master).Take(_config.PairCount).ToList();
-
-        // Create groups of 2 or 3 per card
-        var groups = selected.SelectMany(c =>
+        // Hearts for HardcoreMode
+        if (_modifiers.HasFlag(GameModifier.HardcoreMode))
         {
-            var group = new List<CardBase> { c };
-            for (int i = 1; i < groupSize; i++) group.Add(CloneCard(c));
-            return group;
-        }).ToList();
-
-        _deck = ShuffleHelper.Shuffle(groups);
-
-        // Initialise FlipLimit counters
-        if (_modifiers.HasFlag(GameModifier.FlipLimit))
-        {
-            foreach (var card in _deck)
-                _flipLimits[card] = FLIP_LIMIT_MAX;
+            _maxHearts = difficulty switch
+            {
+                Difficulty.Easy   => 3,
+                Difficulty.Medium => 4,
+                Difficulty.Hard   => 5,
+                _                 => 3,
+            };
+            _hearts = _maxHearts;
         }
+
+        DealBoard();
     }
 
-    /// <summary>Returns a read-only view of the current deck.</summary>
+    /// <summary>
+    /// Deals (or re-deals) a fresh board. Called on start and on each
+    /// EndlessMode board completion.
+    /// </summary>
+    private void DealBoard()
+    {
+        _firstFlipped  = null;
+        _secondFlipped = null;
+        _boardLocked   = false;
+        _ghostedCards.Clear();
+        _decoyCards.Clear();
+
+        var master   = BuildMasterDeck();
+        var selected = ShuffleHelper.Shuffle(master).Take(_config.PairCount).ToList();
+        var pairs    = selected.SelectMany(c => new[] { c, CloneCard(c) }).ToList();
+
+        // MemoryLeakMode: inject N decoy cards (unmatched, disappear on flip)
+        if (_modifiers.HasFlag(GameModifier.MemoryLeakMode))
+        {
+            int decoyCount = Math.Max(1, _config.PairCount / 3);
+            for (int i = 0; i < decoyCount; i++)
+            {
+                // Reuse a random existing card's image but assign CardId = -(i+1) so no match
+                var template = master[_rng.Next(master.Count)];
+                var decoy    = new MonkeyCard(-(i + 1), "???",
+                    template.ImagePath,
+                    "Ghost", "Mysterious");
+                pairs.Add(decoy);
+                _decoyCards.Add(decoy);
+            }
+        }
+
+        _deck = ShuffleHelper.Shuffle(pairs);
+    }
+
     public IReadOnlyList<CardBase> GetDeck() => _deck.AsReadOnly();
 
-    /// <summary>
-    /// Called when the player clicks a card.
-    /// Validates the click and manages flip logic internally.
-    /// </summary>
-    /// <returns>True if the flip was accepted; false if ignored.</returns>
+    // ── OnCardSelected ────────────────────────────────────────────────────
     public bool OnCardSelected(CardBase card, int elapsedSeconds)
     {
         if (_boardLocked)   return false;
@@ -169,160 +140,138 @@ public class GameEngine
         if (card.IsFaceUp)  return false;
         if (card == _firstFlipped || card == _secondFlipped) return false;
 
-        // FlipLimit check — reject if this card is locked out
-        if (_modifiers.HasFlag(GameModifier.FlipLimit))
+        // GhostCard: 40% chance this flip shows blank first for 600ms
+        if (_modifiers.HasFlag(GameModifier.GhostCard) && !_decoyCards.Contains(card))
         {
-            if (_flipLimits.TryGetValue(card, out int remaining) && remaining <= 0)
-                return false;
+            if (_rng.NextSingle() < GHOST_CHANCE)
+            {
+                _ghostedCards.Add(card);
+                // After 600ms, un-ghost and fire the ready event so UI shows real face
+                var captured = card;
+                Task.Delay(600).ContinueWith(_ =>
+                {
+                    _ghostedCards.Remove(captured);
+                    GhostRevealReady?.Invoke(this, captured);
+                });
+            }
         }
 
         card.FlipUp();
         card.Reveal();
 
-        // Decrement flip counter
-        if (_modifiers.HasFlag(GameModifier.FlipLimit) && _flipLimits.ContainsKey(card))
-            _flipLimits[card]--;
-
-        // --- First card ---
         if (_firstFlipped == null)
         {
             _firstFlipped = card;
             return true;
         }
 
-        // --- Second card ---
-        if (_secondFlipped == null)
-        {
-            _secondFlipped = card;
-
-            // TripleMatch: wait for a third card before evaluating
-            if (_modifiers.HasFlag(GameModifier.TripleMatch))
-                return true;
-
-            EvaluatePair(elapsedSeconds);
-            return true;
-        }
-
-        // --- Third card (TripleMatch only) ---
-        _thirdFlipped = card;
+        _secondFlipped = card;
         _moveCount++;
         _boardLocked = true;
-        EvaluateTriple(elapsedSeconds);
+        EvaluatePair(elapsedSeconds);
         return true;
     }
 
-    // ── Evaluate a 2-card flip ─────────────────────────────────────────────
     private void EvaluatePair(int elapsedSeconds)
     {
-        _moveCount++;
-        _boardLocked = true;
-
         CardBase first  = _firstFlipped!;
         CardBase second = _secondFlipped!;
 
-        if (first.CardId == second.CardId)
-            RegisterMatch(elapsedSeconds, first, second);
-        else
-            RegisterMismatch(first, second);
-    }
-
-    // ── Evaluate a 3-card flip ────────────────────────────────────────────
-    private void EvaluateTriple(int elapsedSeconds)
-    {
-        // _firstFlipped, _secondFlipped, _thirdFlipped are all set before this is called
-        CardBase first  = _firstFlipped!;
-        CardBase second = _secondFlipped!;
-        CardBase third  = _thirdFlipped!;
-
-        bool match = first.CardId == second.CardId && second.CardId == third.CardId;
-
-        if (match)
-            RegisterMatch(elapsedSeconds, first, second, third);
-        else
-            RegisterMismatch(first, second, third);
-    }
-
-    // ── Register a successful match ───────────────────────────────────────
-    private void RegisterMatch(int elapsedSeconds, params CardBase[] cards)
-    {
-        foreach (var c in cards) c.MarkAsMatched();
-        _matchCount++;
-        _score.RegisterMatch(elapsedSeconds, cards[0].PointValue);
-
-        var args = new CardPairEventArgs(cards[0], cards[1], cards.Length > 2 ? cards[2] : null);
-        MatchFound?.Invoke(this, args);
-
-        ResetFlipGroup();
-        _boardLocked = false;
-
-        if (IsComplete) GameWon?.Invoke(this, EventArgs.Empty);
-    }
-
-    // ── Register a mismatch ───────────────────────────────────────────────
-    private void RegisterMismatch(params CardBase[] cards)
-    {
-        _score.RegisterMismatch();
-
-        if (_modifiers.HasFlag(GameModifier.HardcoreMode))
+        // Decoy card: always a mismatch — card vanishes after a short pause
+        if (_decoyCards.Contains(first) || _decoyCards.Contains(second))
         {
-            // Hardcore: game over immediately
-            GameOverHardcore?.Invoke(this, EventArgs.Empty);
+            _score.RegisterMismatch();
+            MismatchFound?.Invoke(this, new CardPairEventArgs(first, second));
+            // Decoys are removed from the deck after being shown (disappear)
+            // The UI handles the visual; engine marks them "matched" so they
+            // are no longer interactable, but doesn't count toward the match total.
+            if (_decoyCards.Contains(first))  { first.MarkAsMatched();  _decoyCards.Remove(first); }
+            if (_decoyCards.Contains(second)) { second.MarkAsMatched(); _decoyCards.Remove(second); }
+            ResetFlipGroup();
+            _boardLocked = false;
             return;
         }
 
-        MismatchFound?.Invoke(this, new CardPairEventArgs(cards[0], cards[1],
-            cards.Length > 2 ? cards[2] : null));
-        // Board stays locked; caller calls FlipDownMismatch() after delay
+        bool match = first.CardId == second.CardId;
+
+        if (match)
+        {
+            foreach (var c in new[] { first, second }) c.MarkAsMatched();
+            _matchCount++;
+            _score.RegisterMatch(elapsedSeconds, first.PointValue);
+            MatchFound?.Invoke(this, new CardPairEventArgs(first, second));
+            ResetFlipGroup();
+            _boardLocked = false;
+
+            if (IsComplete)
+            {
+                if (_modifiers.HasFlag(GameModifier.EndlessMode))
+                {
+                    _boardsCompleted++;
+                    _matchCount = 0;
+                    DealBoard();
+                    NewBoardDealt?.Invoke(this, EventArgs.Empty);
+                }
+                else
+                {
+                    GameWon?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+        else
+        {
+            _score.RegisterMismatch();
+
+            if (_modifiers.HasFlag(GameModifier.HardcoreMode))
+            {
+                _hearts--;
+                HeartsChanged?.Invoke(this, new HeartsChangedArgs(_hearts, _maxHearts));
+
+                if (_hearts <= 0)
+                {
+                    MismatchFound?.Invoke(this, new CardPairEventArgs(first, second));
+                    // Short delay so UI shows the bad flip before game over fires
+                    Task.Delay(700).ContinueWith(_ =>
+                        GameOverHardcore?.Invoke(this, EventArgs.Empty));
+                    return;
+                }
+            }
+
+            MismatchFound?.Invoke(this, new CardPairEventArgs(first, second));
+        }
     }
 
-    /// <summary>
-    /// Flips the mismatched group back down and unlocks the board.
-    /// Call this after the UI's mismatch delay.
-    /// </summary>
     public void FlipDownMismatch()
     {
         _firstFlipped?.FlipDown();
         _secondFlipped?.FlipDown();
-        _thirdFlipped?.FlipDown();
         ResetFlipGroup();
         _boardLocked = false;
     }
 
-    // ── CardDrift: randomise positions ────────────────────────────────────
-    /// <summary>
-    /// Shuffles the deck order (CardDrift modifier).
-    /// Fires <see cref="CardsDrifted"/> with the new order so the UI can reposition cards.
-    /// Only unmatched, face-down cards are shuffled.
-    /// </summary>
     public void TriggerCardDrift()
     {
-        // Separate matched (stay put) from unmatched (shuffle positions)
-        var unmatchedIndices = _deck
+        var unmatchedIdx = _deck
             .Select((c, i) => (c, i))
             .Where(x => !x.c.IsMatched)
             .Select(x => x.i)
             .ToList();
 
-        var shuffledIndices = ShuffleHelper.Shuffle(unmatchedIndices);
-
-        // Rebuild deck with matched cards fixed, unmatched reshuffled
-        var newDeck = _deck.ToList();
-        for (int i = 0; i < unmatchedIndices.Count; i++)
-            newDeck[unmatchedIndices[i]] = _deck[shuffledIndices[i]];
+        var shuffled = ShuffleHelper.Shuffle(unmatchedIdx);
+        var newDeck  = _deck.ToList();
+        for (int i = 0; i < unmatchedIdx.Count; i++)
+            newDeck[unmatchedIdx[i]] = _deck[shuffled[i]];
 
         _deck = newDeck;
         CardsDrifted?.Invoke(this, new DriftEventArgs(_deck.AsReadOnly()));
     }
 
-    // ── Private Helpers ───────────────────────────────────────────────────
     private void ResetFlipGroup()
     {
         _firstFlipped  = null;
         _secondFlipped = null;
-        _thirdFlipped  = null;
     }
 
-    /// <summary>Builds the full 9-card master deck from known monkey assets.</summary>
     private static List<CardBase> BuildMasterDeck() => new()
     {
         new MonkeyCard(1, "Serenade", @"Assets\Cards\download__7_.jpg",          "Troubadour",    "Romantic"),
@@ -336,7 +285,6 @@ public class GameEngine
         new MonkeyCard(9, "Astro",    @"Assets\Cards\monyet_astronot.jpg",        "Commander Bak", "Adventurous"),
     };
 
-    /// <summary>Creates a fresh copy of a card with the same ID (for pair/triple building).</summary>
     private static CardBase CloneCard(CardBase source) => source switch
     {
         MonkeyCard  m => new MonkeyCard(m.CardId, m.Label, m.ImagePath, m.CharacterName, m.Personality),
@@ -347,24 +295,24 @@ public class GameEngine
 
 // ── Event Args ────────────────────────────────────────────────────────────────
 
-/// <summary>Event data carrying the cards involved in a match/mismatch (2 or 3).</summary>
 public class CardPairEventArgs : EventArgs
 {
     public CardBase  First  { get; }
     public CardBase  Second { get; }
-    public CardBase? Third  { get; }   // non-null only in TripleMatch mode
-
+    public CardBase? Third  { get; }
     public CardPairEventArgs(CardBase first, CardBase second, CardBase? third = null)
-    {
-        First  = first;
-        Second = second;
-        Third  = third;
-    }
+    { First = first; Second = second; Third = third; }
 }
 
-/// <summary>Event data for CardDrift: carries the new deck order.</summary>
 public class DriftEventArgs : EventArgs
 {
     public IReadOnlyList<CardBase> NewOrder { get; }
     public DriftEventArgs(IReadOnlyList<CardBase> order) => NewOrder = order;
+}
+
+public class HeartsChangedArgs : EventArgs
+{
+    public int Hearts    { get; }
+    public int MaxHearts { get; }
+    public HeartsChangedArgs(int hearts, int max) { Hearts = hearts; MaxHearts = max; }
 }

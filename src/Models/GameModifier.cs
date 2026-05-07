@@ -7,43 +7,46 @@ namespace MATSING.Models;
 [Flags]
 public enum GameModifier
 {
-    /// <summary>
-    /// No modifier. Standard gameplay.
-    /// </summary>
+    /// <summary>No modifier. Standard gameplay.</summary>
     None = 0,
 
-    /// <summary>
-    /// Cards swap positions every 20-30 seconds, increasing chaos.
-    /// </summary>
+    /// <summary>Cards swap positions every 20s, increasing chaos.</summary>
     CardDrift = 1 << 0,
 
-    /// <summary>
-    /// Cards gradually shrink as the game progresses.
-    /// </summary>
+    /// <summary>Cards gradually shrink as the game progresses.</summary>
     ShrinkingCards = 1 << 1,
 
     /// <summary>
-    /// Match three cards instead of two per set.
+    /// Memory Leak Mode: extra decoy cards are injected into the board that look
+    /// like real cards but have no match. They disappear after being flipped once,
+    /// wasting a turn and resetting the streak.
     /// </summary>
-    TripleMatch = 1 << 2,
+    MemoryLeakMode = 1 << 2,
 
     /// <summary>
-    /// Each card can only be flipped a limited number of times before locking.
+    /// Ghost Card Mode: when a card is flipped there is a 40% chance it shows
+    /// a blank face instead of its real image for 600ms before revealing,
+    /// making identification confusing.
     /// </summary>
-    FlipLimit = 1 << 3,
+    GhostCard = 1 << 3,
 
-    /// <summary>
-    /// Zen mode: no timer, no penalties, pure relaxation.
-    /// </summary>
+    /// <summary>Zen mode: no timer, no penalties, pure relaxation.</summary>
     ZenMode = 1 << 4,
 
     /// <summary>
-    /// Hardcore mode: one wrong flip ends the game immediately.
+    /// Hardcore Mode: player gets a limited number of hearts (3 on Easy,
+    /// 4 on Medium, 5 on Hard). Each mismatch costs one heart. Losing all
+    /// hearts ends the game immediately.
     /// </summary>
     HardcoreMode = 1 << 5,
 
-    /// <summary>
-    /// Combo multiplier: consecutive matches build up a multiplier (×2, ×3, ×4...).
-    /// </summary>
+    /// <summary>Combo multiplier: consecutive matches build up a multiplier (×2, ×3, ×4).</summary>
     ComboMultiplier = 1 << 6,
+
+    /// <summary>
+    /// Endless Mode: when all pairs on the current board are matched, a fresh
+    /// shuffled board is automatically dealt and play continues. Score accumulates
+    /// across boards. Only ends when time runs out (or never in Zen+Endless).
+    /// </summary>
+    EndlessMode = 1 << 7,
 }

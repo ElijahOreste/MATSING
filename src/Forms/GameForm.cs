@@ -18,39 +18,39 @@ public class GameForm : Form
     private static readonly Color ColPurple = Color.FromArgb(167, 139, 250);
     private static readonly Color ColWhite  = Color.White;
 
-    // ── Engine ────────────────────────────────────────────────────────────
-    private readonly GameEngine  _engine    = new();
-    private readonly GameTimer   _timer     = new();
-    private readonly Difficulty  _difficulty;
+    // ── Engine & Timer ────────────────────────────────────────────────────
+    private readonly GameEngine   _engine    = new();
+    private readonly GameTimer    _timer     = new();
+    private readonly Difficulty   _difficulty;
     private readonly GameModifier _modifiers;
 
-    // ── Card controls ─────────────────────────────────────────────────────
     private readonly List<CardControl> _cardControls = new();
 
     // ── Panels ────────────────────────────────────────────────────────────
-    private Panel _topBar      = null!;
-    private Panel _timerBar    = null!;  // thin progress bar
-    private Panel _timerFill   = null!;
-    private Panel _modBadgeBar = null!;  // modifier badge strip
-    private Panel _boardPanel  = null!;
-    private Panel _bottomBar   = null!;
+    private Panel _topBar        = null!;
+    private Panel _timerBar      = null!;
+    private Panel _timerFill     = null!;
+    private Panel _modBadgeBar   = null!;
+    private Panel _boardPanel    = null!;
+    private Panel _bottomBar     = null!;
     private Panel _confettiPanel = null!;
 
-    // ── Top-bar pills (GDI+) ──────────────────────────────────────────────
+    // ── Top bar controls ──────────────────────────────────────────────────
     private Controls.ScorePillControl _pillMatches = null!,
                                        _pillMoves   = null!,
                                        _pillScore   = null!,
                                        _pillTime    = null!;
     private Label?  _comboLabel;
-    private Button  _muteBtn  = null!;
+    private Label?  _heartsLabel;   // HardcoreMode heart display
+    private Button  _muteBtn = null!;
 
-    // ── Toast ─────────────────────────────────────────────────────────────
-    private Label  _toastLabel = null!;
+    // ── Bottom bar: status + toast ─────────────────────────────────────────
+    // TOAST FIX: toast is now a Label in the _bottomBar, not floating over cards.
+    // Green background, sits below the board — never blocks card clicks.
+    private Label _statusLabel = null!;
+    private Label _toastLabel  = null!;
     private System.Windows.Forms.Timer _toastTimer    = null!;
     private System.Windows.Forms.Timer _mismatchTimer = null!;
-
-    // ── Bottom status ──────────────────────────────────────────────────────
-    private Label _statusLabel = null!;
 
     // ── Modifier timers ────────────────────────────────────────────────────
     private System.Windows.Forms.Timer? _driftTimer;
@@ -64,8 +64,8 @@ public class GameForm : Form
     private System.Windows.Forms.Timer? _confettiTimer;
     private readonly Random _rng = new();
 
-    // ── Grid metrics (for named resize handler) ───────────────────────────
-    private int _cols, _cardBaseW, _cardBaseH, _gapX = 14, _gapY = 14;
+    // ── State ─────────────────────────────────────────────────────────────
+    private int  _cols, _cardBaseW, _cardBaseH, _gapX = 14, _gapY = 14;
     private bool _isClosing;
     private bool _beepedThisTick;
 
@@ -87,10 +87,15 @@ public class GameForm : Form
         Icon            = SystemIcons.Application;
         FormClosing    += (_, _) => { _isClosing = true; _timer.Stop(); StopModTimers(); };
 
-        _mismatchTimer          = new System.Windows.Forms.Timer { Interval = 900 };
-        _mismatchTimer.Tick    += MismatchTimer_Tick;
-        _toastTimer             = new System.Windows.Forms.Timer { Interval = 1400 };
-        _toastTimer.Tick       += (_, _) => { _toastTimer.Stop(); _toastLabel.Visible = false; };
+        _mismatchTimer       = new System.Windows.Forms.Timer { Interval = 900 };
+        _mismatchTimer.Tick += MismatchTimer_Tick;
+        _toastTimer          = new System.Windows.Forms.Timer { Interval = 2000 };
+        _toastTimer.Tick    += (_, _) =>
+        {
+            _toastTimer.Stop();
+            _toastLabel.Visible = false;
+            _statusLabel.Visible = true;
+        };
 
         BuildUI();
         WireEngine();
@@ -109,7 +114,8 @@ public class GameForm : Form
         _pillMatches = new Controls.ScorePillControl("Matches", "0");
         _pillMoves   = new Controls.ScorePillControl("Moves",   "0");
         _pillScore   = new Controls.ScorePillControl("Score",   "0");
-        _pillTime    = new Controls.ScorePillControl("Time", _modifiers.HasFlag(GameModifier.ZenMode) ? "∞" : "—");
+        _pillTime    = new Controls.ScorePillControl("Time",
+            _modifiers.HasFlag(GameModifier.ZenMode) ? "∞" : "—");
 
         var pillFlow = new FlowLayoutPanel
         {
@@ -132,7 +138,19 @@ public class GameForm : Form
             pillFlow.Controls.Add(_comboLabel);
         }
 
-        // Right-side buttons
+        if (_modifiers.HasFlag(GameModifier.HardcoreMode))
+        {
+            _heartsLabel = new Label
+            {
+                Text      = "",
+                Font      = new Font("Segoe UI Emoji", 18f),
+                ForeColor = ColRed,
+                BackColor = Color.Transparent,
+                AutoSize  = true,
+            };
+            pillFlow.Controls.Add(_heartsLabel);
+        }
+
         _muteBtn = MakeTopBtn("🔊", (_, _) =>
         {
             SfxPlayer.Muted = !SfxPlayer.Muted;
@@ -160,38 +178,24 @@ public class GameForm : Form
                                            (_topBar.Height - rightFlow.PreferredSize.Height) / 2);
         };
 
-        // ── Timer progress bar ────────────────────────────────────────────
-        _timerBar = new Panel { Dock = DockStyle.Top, Height = 8, BackColor = Color.FromArgb(25, 255, 255, 255) };
+        // ── Timer bar ─────────────────────────────────────────────────────
+        _timerBar  = new Panel { Dock = DockStyle.Top, Height = 8, BackColor = Color.FromArgb(25, 255, 255, 255) };
         _timerFill = new Panel { Dock = DockStyle.Left, Width = 0, BackColor = ColTeal };
         _timerBar.Controls.Add(_timerFill);
 
         // ── Modifier badge strip ──────────────────────────────────────────
         _modBadgeBar = new Panel { Dock = DockStyle.Top, Height = 0, BackColor = ColBg2 };
         _modBadgeBar.Paint += PaintModBadges;
-        if (_modifiers != GameModifier.None)
-        {
-            _modBadgeBar.Height = 30;
-        }
+        if (_modifiers != GameModifier.None) _modBadgeBar.Height = 30;
 
         // ── Board ─────────────────────────────────────────────────────────
         _boardPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent, AutoScroll = true };
         _boardPanel.Resize += BoardPanel_Resize;
 
-        _toastLabel = new Label
-        {
-            AutoSize  = false,
-            Size      = new Size(260, 46),
-            Font      = new Font("Segoe UI Black", 13f, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleCenter,
-            Visible   = false,
-            BackColor = Color.Transparent,
-            ForeColor = ColWhite,
-        };
-        _toastLabel.Paint += PaintToast;
-        _boardPanel.Controls.Add(_toastLabel);
-
-        // ── Bottom status bar ─────────────────────────────────────────────
-        _bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = ColBg2 };
+        // ── Bottom bar — status + TOAST ────────────────────────────────────
+        // TOAST FIX: toast lives in the bottom bar as a green notification label.
+        // It never overlaps the card board, so cards below remain clickable.
+        _bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 38, BackColor = ColBg2 };
         _bottomBar.Paint += PaintBottomBar;
 
         _statusLabel = new Label
@@ -203,6 +207,19 @@ public class GameForm : Form
             BackColor = Color.Transparent,
             Text      = BuildStatusText(),
         };
+
+        // Toast label replaces status text temporarily in the same bottom bar
+        _toastLabel = new Label
+        {
+            Dock      = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font      = new Font("Segoe UI Black", 11f, FontStyle.Bold),
+            BackColor = ColGreen,
+            ForeColor = Color.FromArgb(10, 40, 15),
+            Visible   = false,
+        };
+
+        _bottomBar.Controls.Add(_toastLabel);
         _bottomBar.Controls.Add(_statusLabel);
 
         // ── Confetti overlay ──────────────────────────────────────────────
@@ -218,23 +235,18 @@ public class GameForm : Form
         _confettiPanel.SendToBack();
     }
 
-    // ── Custom paint: top bar logo ────────────────────────────────────────
     private void PaintTopBar(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-        // Dark gradient strip
         using var bgb = new SolidBrush(ColBg2); g.FillRectangle(bgb, _topBar.ClientRectangle);
         using var lp  = new Pen(Color.FromArgb(40, ColPurple), 1f);
         g.DrawLine(lp, 0, _topBar.Height - 1, _topBar.Width, _topBar.Height - 1);
-
         using var lf = new Font("Segoe UI Black", 16f, FontStyle.Bold, GraphicsUnit.Point);
         using var lb = new SolidBrush(ColGold);
         g.DrawString("🐾 MATSING", lf, lb, 12, (_topBar.Height - 22) / 2);
     }
 
-    // ── Custom paint: modifier badge strip ───────────────────────────────
     private void PaintModBadges(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
@@ -242,13 +254,14 @@ public class GameForm : Form
         using var bgb = new SolidBrush(ColBg2); g.FillRectangle(bgb, _modBadgeBar.ClientRectangle);
 
         var badges = new List<(string text, Color col)>();
-        if (_modifiers.HasFlag(GameModifier.ZenMode))         badges.Add(("🧘 Zen",      ColTeal));
-        if (_modifiers.HasFlag(GameModifier.HardcoreMode))    badges.Add(("💀 Hardcore", ColRed));
-        if (_modifiers.HasFlag(GameModifier.TripleMatch))     badges.Add(("🎲 Triple",   ColPurple));
-        if (_modifiers.HasFlag(GameModifier.CardDrift))       badges.Add(("🌀 Drift",    ColTeal));
-        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))  badges.Add(("📉 Shrink",   ColGold));
-        if (_modifiers.HasFlag(GameModifier.FlipLimit))       badges.Add(("🔒 Flip ×2",  ColRed));
-        if (_modifiers.HasFlag(GameModifier.ComboMultiplier)) badges.Add(("⚡ Combo",    ColGold));
+        if (_modifiers.HasFlag(GameModifier.ZenMode))         badges.Add(("🧘 Zen",           ColTeal));
+        if (_modifiers.HasFlag(GameModifier.HardcoreMode))    badges.Add(("❤️ Hardcore",       ColRed));
+        if (_modifiers.HasFlag(GameModifier.MemoryLeakMode))  badges.Add(("👻 Memory Leak",    ColPurple));
+        if (_modifiers.HasFlag(GameModifier.GhostCard))       badges.Add(("🫥 Ghost Card",     ColPurple));
+        if (_modifiers.HasFlag(GameModifier.CardDrift))       badges.Add(("🌀 Drift",          ColTeal));
+        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))  badges.Add(("📉 Shrink",         ColGold));
+        if (_modifiers.HasFlag(GameModifier.ComboMultiplier)) badges.Add(("⚡ Combo",          ColGold));
+        if (_modifiers.HasFlag(GameModifier.EndlessMode))     badges.Add(("♾️ Endless",        ColGreen));
 
         using var bf = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point);
         float bx = 10;
@@ -266,7 +279,6 @@ public class GameForm : Form
         }
     }
 
-    // ── Custom paint: bottom bar ──────────────────────────────────────────
     private void PaintBottomBar(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
@@ -275,22 +287,6 @@ public class GameForm : Form
         g.DrawLine(lp, 0, 0, _bottomBar.Width, 0);
     }
 
-    // ── Custom paint: toast ────────────────────────────────────────────────
-    private void PaintToast(object? sender, PaintEventArgs e)
-    {
-        var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        var r = new Rectangle(0, 0, _toastLabel.Width, _toastLabel.Height);
-        using var bb = new SolidBrush(Color.FromArgb(220, ColCard)); FillRound(g, bb, r, 12);
-        using var bp = new Pen(Color.FromArgb(140, ColGold), 1.5f);  DrawRound(g, bp, r, 12);
-        using var tf = new Font("Segoe UI Black", 13f, FontStyle.Bold, GraphicsUnit.Point);
-        using var tb = new SolidBrush(ColGold);
-        var tsz = g.MeasureString(_toastLabel.Text, tf);
-        g.DrawString(_toastLabel.Text, tf, tb,
-            (r.Width - tsz.Width) / 2f, (r.Height - tsz.Height) / 2f);
-    }
-
-    // ── Top-bar button factory ────────────────────────────────────────────
     private Button MakeTopBtn(string text, EventHandler click)
     {
         var btn = new Button
@@ -315,11 +311,14 @@ public class GameForm : Form
     // ── Engine wiring ─────────────────────────────────────────────────────
     private void WireEngine()
     {
-        _engine.MatchFound       += Engine_MatchFound;
-        _engine.MismatchFound    += Engine_MismatchFound;
-        _engine.GameWon          += Engine_GameWon;
-        _engine.GameOverHardcore += Engine_GameOverHardcore;
-        _engine.CardsDrifted     += Engine_CardsDrifted;
+        _engine.MatchFound        += Engine_MatchFound;
+        _engine.MismatchFound     += Engine_MismatchFound;
+        _engine.GameWon           += Engine_GameWon;
+        _engine.GameOverHardcore  += Engine_GameOverHardcore;
+        _engine.CardsDrifted      += Engine_CardsDrifted;
+        _engine.NewBoardDealt     += Engine_NewBoardDealt;
+        _engine.GhostRevealReady  += Engine_GhostRevealReady;
+        _engine.HeartsChanged     += Engine_HeartsChanged;
     }
 
     // ── Start / Restart ───────────────────────────────────────────────────
@@ -335,9 +334,13 @@ public class GameForm : Form
         _engine.StartNewGame(_difficulty, _modifiers);
         BuildCardGrid();
         UpdatePills();
-        _statusLabel.Text       = BuildStatusText();
-        _timerFill.BackColor    = ColTeal;
-        _timerBar.Visible       = !_modifiers.HasFlag(GameModifier.ZenMode);
+        _statusLabel.Text    = BuildStatusText();
+        _timerFill.BackColor = ColTeal;
+        _timerBar.Visible    = !_modifiers.HasFlag(GameModifier.ZenMode);
+
+        // Hearts display
+        if (_heartsLabel != null)
+            _heartsLabel.Text = BuildHeartsText(_engine.Hearts);
 
         if (_modifiers.HasFlag(GameModifier.ZenMode)) _pillTime.SetValue("∞");
         else _timer.Start(_engine.Config.TimeLimitS);
@@ -352,7 +355,6 @@ public class GameForm : Form
         foreach (var c in _cardControls) { c.CardClicked -= Card_Clicked; c.Dispose(); }
         _cardControls.Clear();
         _boardPanel.Controls.Clear();
-        _boardPanel.Controls.Add(_toastLabel);
 
         var cfg  = _engine.Config;
         var deck = _engine.GetDeck();
@@ -374,29 +376,7 @@ public class GameForm : Form
             _boardPanel.Controls.Add(ctrl);
         }
 
-        if (_modifiers.HasFlag(GameModifier.FlipLimit)) AttachFlipOverlays();
         RepositionCards();
-        _toastLabel.BringToFront();
-    }
-
-    private void AttachFlipOverlays()
-    {
-        foreach (var ctrl in _cardControls)
-        {
-            ctrl.Paint += (_, pe) =>
-            {
-                int rem = _engine.FlipsRemaining(ctrl.CardData);
-                if (rem < 0 || ctrl.CardData.IsMatched) return;
-                using var f  = new Font("Segoe UI Black", Math.Max(7f, ctrl.Width / 10f), FontStyle.Bold, GraphicsUnit.Point);
-                using var bb = new SolidBrush(rem == 0 ? Color.FromArgb(200, ColRed) : Color.FromArgb(150, ColBg2));
-                using var fb = new SolidBrush(Color.White);
-                string t     = rem.ToString();
-                var    sz    = pe.Graphics.MeasureString(t, f);
-                var    r     = new RectangleF(ctrl.Width - sz.Width - 6, 4, sz.Width + 4, sz.Height + 2);
-                pe.Graphics.FillRectangle(bb, r);
-                pe.Graphics.DrawString(t, f, fb, r.X + 2, r.Y + 1);
-            };
-        }
     }
 
     private void BoardPanel_Resize(object? sender, EventArgs e) => RepositionCards();
@@ -416,23 +396,43 @@ public class GameForm : Form
             _cardControls[i].Left = offX + col * (cW + _gapX);
             _cardControls[i].Top  = offY + row * (cH + _gapY);
         }
-        _toastLabel.Location = new Point(
-            (_boardPanel.Width  - _toastLabel.Width)  / 2,
-            (_boardPanel.Height - _toastLabel.Height) / 2 + 60);
     }
 
     // ── Card click ────────────────────────────────────────────────────────
     private void Card_Clicked(object? sender, CardBase card)
     {
         if (sender is not CardControl ctrl) return;
-        bool flipBlocked = _modifiers.HasFlag(GameModifier.FlipLimit)
-                        && !card.IsMatched && !card.IsFaceUp
-                        && _engine.FlipsRemaining(card) <= 0;
         bool accepted = _engine.OnCardSelected(card, _timer.Elapsed);
-        if (!accepted) { if (flipBlocked) SfxPlayer.PlayFlipLimit(); return; }
+        if (!accepted) return;
+
         SfxPlayer.PlayFlip();
-        ctrl.PlayFlipAnimation();
+
+        // GhostCard: if this card is ghosted, show blank overlay temporarily
+        if (_engine.IsGhosted(card))
+        {
+            // The card control shows its back until GhostRevealReady fires
+            // We just do the flip animation — control's DrawFront will check IsGhosted
+            ctrl.PlayFlipAnimation();
+            ctrl.Invalidate();
+        }
+        else
+        {
+            ctrl.PlayFlipAnimation();
+        }
+
         ctrl.Invalidate();
+    }
+
+    // ── GhostRevealReady ──────────────────────────────────────────────────
+    // Fires from a Task thread — must Invoke
+    private void Engine_GhostRevealReady(object? sender, CardBase card)
+    {
+        if (_isClosing || IsDisposed) return;
+        Invoke(() =>
+        {
+            var ctrl = FindCtrl(card);
+            ctrl?.Invalidate(); // redraws with real face now that ghost is cleared
+        });
     }
 
     // ── Match ─────────────────────────────────────────────────────────────
@@ -440,30 +440,24 @@ public class GameForm : Form
     {
         FindCtrl(e.First)?.PlayMatchAnimation();
         FindCtrl(e.Second)?.PlayMatchAnimation();
-        if (e.Third != null) FindCtrl(e.Third)?.PlayMatchAnimation();
-
-        // Grow cards temporarily in shrinking mode when match found
-        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))
-        {
-            GrowCardsTemporarily();
-        }
 
         int streak = _engine.Streak;
         if (streak >= 2)
         {
             SfxPlayer.PlayCombo(streak);
             string txt = _modifiers.HasFlag(GameModifier.ComboMultiplier)
-                ? $"🔥 {streak}× Combo! ×{Math.Min(streak, 4)} pts"
+                ? $"🔥 {streak}× Combo!  ×{Math.Min(streak, 4)} bonus"
                 : $"🔥 {streak}× Combo!";
-            ShowToast(txt);
+            ShowToast(txt, ColGold, Color.FromArgb(20, 10, 0));
             _statusLabel.Text = $"🔥 {streak}× Combo Streak!";
         }
         else
         {
             SfxPlayer.PlayMatch();
-            ShowToast("🎯 Match!");
+            ShowToast("✅  Match!", ColGreen, Color.FromArgb(10, 40, 15));
             _statusLabel.Text = $"Matched  {_engine.MatchCount} / {_engine.TotalPairs}  pairs";
         }
+
         UpdatePills();
         UpdateComboLabel();
     }
@@ -472,15 +466,40 @@ public class GameForm : Form
     private void Engine_MismatchFound(object? sender, CardPairEventArgs e)
     {
         SfxPlayer.PlayMismatch();
-        _statusLabel.Text = "Not a match — keep looking! 🙈";
-        UpdatePills(); UpdateComboLabel();
-        if (_modifiers.HasFlag(GameModifier.FlipLimit))
+
+        bool isDecoy = _engine.IsDecoy(e.First) || _engine.IsDecoy(e.Second);
+        if (isDecoy)
         {
-            FindCtrl(e.First)?.Invalidate();
-            FindCtrl(e.Second)?.Invalidate();
-            if (e.Third != null) FindCtrl(e.Third)?.Invalidate();
+            ShowToast("👻 Decoy! Wasted turn!", ColPurple, ColWhite);
+            _statusLabel.Text = "That was a decoy card! Watch out 👻";
+            // Decoy cards are already marked matched by engine — hide them
+            HideDecoyControls(e);
         }
+        else
+        {
+            ShowToast("❌  Not a match!", ColRed, ColWhite);
+            _statusLabel.Text = "Not a match — keep looking! 🙈";
+        }
+
+        UpdatePills();
+        UpdateComboLabel();
         _mismatchTimer.Start();
+    }
+
+    private void HideDecoyControls(CardPairEventArgs e)
+    {
+        // Decoys vanish after the mismatch delay
+        var cA = FindCtrl(e.First);
+        var cB = FindCtrl(e.Second);
+        Task.Delay(900).ContinueWith(_ =>
+        {
+            if (_isClosing || IsDisposed) return;
+            Invoke(() =>
+            {
+                if (cA != null && e.First.IsMatched)  cA.Visible = false;
+                if (cB != null && e.Second.IsMatched) cB.Visible = false;
+            });
+        });
     }
 
     private void MismatchTimer_Tick(object? sender, EventArgs e)
@@ -491,23 +510,39 @@ public class GameForm : Form
         foreach (var c in _cardControls) if (!c.CardData.IsMatched) c.Invalidate();
     }
 
+    // ── HardcoreMode hearts changed ───────────────────────────────────────
+    private void Engine_HeartsChanged(object? sender, HeartsChangedArgs e)
+    {
+        if (_heartsLabel == null) return;
+        _heartsLabel.Text = BuildHeartsText(e.Hearts);
+        ShowToast($"💔 -{1}  {e.Hearts} hearts left", ColRed, ColWhite);
+    }
+
+    private static string BuildHeartsText(int hearts) =>
+        string.Concat(Enumerable.Repeat("❤️", hearts));
+
     // ── Hardcore over ─────────────────────────────────────────────────────
     private void Engine_GameOverHardcore(object? sender, EventArgs e)
     {
-        if (_isClosing) return;
-        _timer.Stop(); StopModTimers();
-        SfxPlayer.PlayGameOver();
-        ShowToast("💀 Hardcore: Game Over!");
-        _statusLabel.Text = "One wrong flip ended the run! 💀";
-        Task.Delay(1000).ContinueWith(_ =>
+        if (_isClosing || IsDisposed) return;
+        Invoke(() =>
         {
-            if (IsDisposed || _isClosing) return;
-            Invoke(() =>
+            _timer.Stop(); StopModTimers();
+            SfxPlayer.PlayGameOver();
+            ShowToast("💀 Out of hearts! Game Over!", ColRed, ColWhite);
+            _statusLabel.Text = "Out of hearts! 💀";
+
+            Task.Delay(1200).ContinueWith(_ =>
             {
-                var wf = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score, _difficulty, timeUp: true);
-                wf.ShowDialog(this);
-                GameFinished?.Invoke(this, _engine.Score);
-                if (wf.PlayAgain) StartGame(); else Close();
+                if (_isClosing || IsDisposed) return;
+                Invoke(() =>
+                {
+                    var wf = new WinForm(_engine.MoveCount, _timer.Elapsed,
+                                        _engine.Score, _difficulty, timeUp: true);
+                    wf.ShowDialog(this);
+                    GameFinished?.Invoke(this, _engine.Score);
+                    if (wf.PlayAgain) StartGame(); else Close();
+                });
             });
         });
     }
@@ -522,8 +557,28 @@ public class GameForm : Form
         foreach (var card in e.NewOrder)
             if (lookup.TryGetValue(card, out var ctrl)) _cardControls.Add(ctrl);
         SfxPlayer.PlayShuffle();
-        ShowToast("🌀 Cards Drifted!");
+        ShowToast("🌀  Cards Drifted!", ColTeal, Color.FromArgb(0, 30, 30));
         RepositionCards();
+    }
+
+    // ── EndlessMode: new board ────────────────────────────────────────────
+    private void Engine_NewBoardDealt(object? sender, EventArgs e)
+    {
+        if (_isClosing) return;
+        SfxPlayer.PlayGameWin(); // reuse win sound for board clear
+        ShowToast($"♾️  Board {_engine.BoardsCompleted} cleared! Keep going!", ColGreen, Color.FromArgb(10, 40, 15));
+        _statusLabel.Text = $"Board {_engine.BoardsCompleted} complete — new board incoming!";
+
+        // Small delay so player sees the cleared board before rebuild
+        Task.Delay(1000).ContinueWith(_ =>
+        {
+            if (_isClosing || IsDisposed) return;
+            Invoke(() =>
+            {
+                BuildCardGrid();
+                UpdatePills();
+            });
+        });
     }
 
     // ── Win ───────────────────────────────────────────────────────────────
@@ -555,10 +610,13 @@ public class GameForm : Form
         if (_isClosing) return;
         _pillTime.SetValue("0s");
         SfxPlayer.PlayGameOver();
-        ShowToast("⏰ Time's Up!");
+        ShowToast("⏰  Time's Up!", ColRed, ColWhite);
         _statusLabel.Text = "Time's up! Better luck next time 🙈";
         StopModTimers();
-        var wf = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score, _difficulty, timeUp: true);
+
+        // In EndlessMode, time running out is how the game ends — show best board count
+        var wf = new WinForm(_engine.MoveCount, _timer.Elapsed, _engine.Score, _difficulty,
+                             timeUp: !_modifiers.HasFlag(GameModifier.EndlessMode));
         wf.ShowDialog(this);
         GameFinished?.Invoke(this, _engine.Score);
         if (wf.PlayAgain) StartGame(); else Close();
@@ -601,13 +659,6 @@ public class GameForm : Form
         RepositionCards();
     }
 
-    private void GrowCardsTemporarily()
-    {
-        // Temporarily increase shrink scale when a match is found
-        _shrinkScale = Math.Min(2.0f, _shrinkScale + 0.05f);
-        ApplyShrink();
-    }
-
     // ── Confetti ──────────────────────────────────────────────────────────
     private void LaunchConfetti()
     {
@@ -624,9 +675,18 @@ public class GameForm : Form
         _confettiTimer.Tick += (_, _) =>
         {
             bool any = false;
-            foreach (var p in _confetti) { p.Y += p.Speed; p.X += (float)Math.Sin(p.Y * p.Tilt) * 2; if (p.Y < Height + 20) any = true; }
+            foreach (var p in _confetti)
+            {
+                p.Y += p.Speed;
+                p.X += (float)Math.Sin(p.Y * p.Tilt) * 2;
+                if (p.Y < Height + 20) any = true;
+            }
             _confettiPanel.Invalidate();
-            if (!any) { _confettiTimer?.Stop(); _confettiTimer?.Dispose(); _confettiTimer = null; _confettiPanel.SendToBack(); }
+            if (!any)
+            {
+                _confettiTimer?.Stop(); _confettiTimer?.Dispose();
+                _confettiTimer = null; _confettiPanel.SendToBack();
+            }
         };
         _confettiTimer.Start();
     }
@@ -637,16 +697,19 @@ public class GameForm : Form
         { using var b = new SolidBrush(p.Colour); e.Graphics.FillRectangle(b, p.X, p.Y, p.Size, p.Size * 0.5f); }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-    private void ShowToast(string msg)
+    // ── Toast (bottom bar, never overlaps cards) ──────────────────────────
+    private void ShowToast(string msg, Color bg, Color fg)
     {
-        _toastLabel.Text    = msg;
-        _toastLabel.Visible = true;
-        _toastLabel.BringToFront();
-        _toastLabel.Invalidate();
-        _toastTimer.Stop(); _toastTimer.Start();
+        _toastLabel.Text      = msg;
+        _toastLabel.BackColor = bg;
+        _toastLabel.ForeColor = fg;
+        _statusLabel.Visible  = false;
+        _toastLabel.Visible   = true;
+        _toastTimer.Stop();
+        _toastTimer.Start();
     }
 
+    // ── Pill / label updates ──────────────────────────────────────────────
     private void UpdatePills()
     {
         _pillMatches.SetValue(_engine.MatchCount.ToString());
@@ -657,43 +720,27 @@ public class GameForm : Form
     private void UpdateComboLabel()
     {
         if (_comboLabel == null) return;
-        int m = Math.Min(_engine.Streak, 4);
-        _comboLabel.Text      = $"×{Math.Max(1, m)}";
+        int m = Math.Max(1, Math.Min(_engine.Streak, 4));
+        _comboLabel.Text      = $"×{m}";
         _comboLabel.ForeColor = m >= 4 ? ColRed : m >= 2 ? ColGold : ColTeal;
     }
 
     private string BuildStatusText()
     {
         var parts = new List<string>();
-        if (_modifiers.HasFlag(GameModifier.ZenMode))         parts.Add("🧘 Zen");
-        if (_modifiers.HasFlag(GameModifier.HardcoreMode))    parts.Add("💀 Hardcore");
-        if (_modifiers.HasFlag(GameModifier.TripleMatch))     parts.Add("🎲 Triple");
-        if (_modifiers.HasFlag(GameModifier.CardDrift))       parts.Add("🌀 Drift");
-        if (_modifiers.HasFlag(GameModifier.ShrinkingCards))  parts.Add("📉 Shrink");
-        if (_modifiers.HasFlag(GameModifier.FlipLimit))       parts.Add("🔒 Flip×2");
-        if (_modifiers.HasFlag(GameModifier.ComboMultiplier)) parts.Add("⚡ Combo");
+        if (_modifiers.HasFlag(GameModifier.ZenMode))        parts.Add("🧘 Zen");
+        if (_modifiers.HasFlag(GameModifier.HardcoreMode))   parts.Add("❤️ Hardcore");
+        if (_modifiers.HasFlag(GameModifier.MemoryLeakMode)) parts.Add("👻 Memory Leak");
+        if (_modifiers.HasFlag(GameModifier.GhostCard))      parts.Add("🫥 Ghost Card");
+        if (_modifiers.HasFlag(GameModifier.CardDrift))      parts.Add("🌀 Drift");
+        if (_modifiers.HasFlag(GameModifier.ShrinkingCards)) parts.Add("📉 Shrink");
+        if (_modifiers.HasFlag(GameModifier.EndlessMode))    parts.Add("♾️ Endless");
         string mods = parts.Count > 0 ? "  │  " + string.Join("  ", parts) : "";
         return $"Find the matching monkey pairs! 🐒{mods}";
     }
 
     private CardControl? FindCtrl(CardBase card) =>
         _cardControls.FirstOrDefault(c => ReferenceEquals(c.CardData, card));
-
-    // ── GDI+ helpers ─────────────────────────────────────────────────────
-    private static void FillRound(Graphics g, Brush b, Rectangle r, int rad)
-    { using var p = RoundPath(r, rad); g.FillPath(b, p); }
-    private static void DrawRound(Graphics g, Pen pen, Rectangle r, int rad)
-    { using var p = RoundPath(r, rad); g.DrawPath(pen, p); }
-    private static System.Drawing.Drawing2D.GraphicsPath RoundPath(Rectangle r, int rad)
-    {
-        var path = new System.Drawing.Drawing2D.GraphicsPath();
-        int d = Math.Max(1, Math.Min(rad * 2, Math.Min(r.Width, r.Height)));
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure(); return path;
-    }
 
     protected override void Dispose(bool disposing)
     {
